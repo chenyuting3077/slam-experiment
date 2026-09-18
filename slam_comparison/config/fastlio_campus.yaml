@@ -1,0 +1,59 @@
+/**:
+  ros__parameters:
+    common:
+      map_frame: "map"
+      lidar_frame: "velodyne"
+      base_frame: "base_link"
+      imu_frame: "base_link"
+      visualization_frame: "base"     # must be one of: lidar / base / imu (literal keywords, not a TF frame name)
+      time_sync_en: false
+
+    preprocess:
+      lidar_type: 2                # 2 = Velodyne
+      scan_line: 16                # VLP-16
+      scan_rate: 10                # Hz
+      timestamp_unit: 0            # per-point 'time' field is in seconds (verified from the raw bag data)
+      blind: 0.5
+
+    mapping:
+      acc_cov: 0.1
+      gyr_cov: 0.1
+      b_acc_cov: 0.0001
+      b_gyr_cov: 0.0001
+      fov_degree: 360.0
+      det_range: 100.0
+      extrinsic_est_en: false
+      # /imu_correct is already pre-rotated into the lidar-aligned "base_link"
+      # frame by LIO-SAM's own imuConverter (extrinsicTrans = [0,0,0] in its
+      # params.yaml), so FAST-LIO2's own IMU->LiDAR extrinsic is identity.
+      extrinsic_T: [ 0.0, 0.0, 0.0 ]
+      extrinsic_R: [ 1.0, 0.0, 0.0,
+                     0.0, 1.0, 0.0,
+                     0.0, 0.0, 1.0 ]
+
+    # 0.3 caused a PCL VoxelGrid integer-index overflow once the accumulated
+    # global map's spatial extent grew large enough (this is a large
+    # outdoor loop, ~1437m path length) -- coarsened to keep total voxel
+    # count under int32 range for the whole run.
+    filter_size_map: 1.0
+
+    publish:
+      path_en: true
+      scan_publish_en: true
+      dense_publish_en: true
+      scan_bodyframe_pub_en: true
+
+    pcd_save:
+      pcd_save_en: true
+      interval: -1
+
+    verbose: false
+    runtime_pos_log_enable: false
+    point_filter_num: 4
+    max_iteration: 4
+    # Default 1000.0 correlates with a mapping breakdown ~100-270s into
+    # this run (goes silent, then "No Effective Points!" forever after) --
+    # suspected local-map cube recentering bug when crossing the boundary.
+    # Enlarged well past our trajectory's real extent to avoid ever
+    # triggering a cube shift.
+    cube_side_length: 5000.0

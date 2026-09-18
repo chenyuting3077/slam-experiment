@@ -1,5 +1,6 @@
 data/
-outputs/
+outputs/*
+!outputs/comparison_report.md
 build/
 install/
 log/
