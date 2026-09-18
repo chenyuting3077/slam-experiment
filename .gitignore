@@ -1,0 +1,13 @@
+data/
+outputs/
+build/
+install/
+log/
+*.bag
+*.db3
+*.pbstream
+*.db
+*.pcd
+*.ply
+__pycache__/
+*.pyc
