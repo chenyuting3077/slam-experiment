@@ -28,7 +28,7 @@
 - **修正嘗試:`RGBD/LocalRadius` 10→60m、`RGBD/ProximityMaxGraphDepth` 50→0(不限制)**,重新完整跑一次(976 個節點)→ Link 型態分佈**依然是 0 條 loop closure**(1950 neighbor、819 pose-prior、975 gravity)。終點誤差意外從 256.06m 降到 163.67m,但 z 方向仍嚴重漂移(153m),這個改善比較可能是優化步驟其他連帶效應,**不是**真正的迴環修正生效。
 - 根因跟 Cartographer/LIO-SAM 不同層次:`RGBD/LocalRadius` 是用「里程計估計的目前位置」去搜尋附近的舊節點,但 RTAB-Map 純 ICP 里程計(只在初始化時用 IMU 對齊重力,沒有逐幀緊耦合)本身漂移量太大(z 方向落差達 150m+),就算搜尋半徑再放寬,**估計位置本身已經跟真實位置差了 150 米以上**,遠超任何合理的搜尋半徑,回環候選自然找不到。這代表 RTAB-Map 在這個資料集上的問題核心是**原始里程計精度不足**,不是回環搜尋半徑的參數問題——跟 Cartographer(有找到回環但修正幅度有限)、LIO-SAM(里程計夠準,調寬半徑後幾乎完全修正)形成清楚對比,詳見文末分析。
 - 這完全符合原計畫的預期警語:RTAB-Map 在純 LiDAR ICP 模式下是「非典型使用場景」,不能反映它招牌的視覺 bag-of-words 回環實力。
-- 點雲用官方 `rtabmap-export --cloud --scan --voxel 0.05`,15.4M 點,`outputs/pointclouds/rtabmap_campus.ply`(第一輪結果;第二輪的點雲沒有重新匯出,因為軌跡本質上沒有真正修正)。
+- 點雲用官方 `rtabmap-export --cloud --scan --voxel 0.05`,`outputs/pointclouds/rtabmap_campus.ply`(已用第二輪 `rtabmap_campus_v2.db` 重新匯出,15.36M 點;跟第一輪視覺上差異不大,因為軌跡本質上沒有真正被迴環修正,詳見上方分析)。
 
 ### LIO-SAM(Docker/ROS 2 Humble,ros2 分支) — ✅ 成功,調參後終點誤差 0.288m
 - 官方 `ros2` 分支只保證到 Humble,故用官方 Dockerfile 建的 Humble 容器跑,容器內部自己 `ros2 bag play`(避開 Humble/Jazzy 跨版本 DDS 資料層不互通的問題——實測發現：topic discovery 可以跨版本互見,但實際訊息完全不會送達,`ros2 topic echo`/`hz` 等 CLI 工具還會因為新版 TypeHash 欄位直接拋例外)。
