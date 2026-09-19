@@ -27,7 +27,7 @@
 
 **這次最有意思的發現**:RTAB-Map 的 ATE 數字(0.944m)比 FAST-LIO2(5.228m)漂亮,但那是因為它只成功追蹤了 17% 的路徑就停滯,LIO-SAM 也是同樣的模式(前 20% 正確、之後完全發散)——都不是「更準」,是「提早放棄/失去追蹤」。單看 ATE 數字會誤導,必須同時看軌跡覆蓋率才能公平比較。**四套系統裡只有 FAST-LIO2 完整跑完了整段路**:它沒有迴環偵測,累積誤差確實最大,但也因此不受「因子圖被污染後回不去」「ICP 找不到配對就整段卡住」這類問題影響,是這次測試最穩健的系統。
 
-![Mid360 四套系統比較圖(Cartographer 發散、LIO-SAM 前段正確後段發散、RTAB-Map 提早停止、FAST-LIO2 完整跑完)](docs/images/mid360/comparison_map_grid_mid360.png)
+![Mid360 四套系統比較圖(Cartographer 發散、RTAB-Map/LIO-SAM 圖中只畫發散/停止前成功追蹤的那一段、FAST-LIO2 完整跑完)](docs/images/mid360/comparison_map_grid_mid360.png)
 
 ## 目錄結構
 
