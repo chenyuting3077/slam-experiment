@@ -23,7 +23,7 @@ TILE_SETS = {
     ],
     'mid360': [
         ('Cartographer 3D', 'outputs/cartographer_mid360_map.png',
-         'FAILURE\ndiverged (gravity-alignment\nissue with this IMU)'),
+         'FAILURE\ndiverges within ~0.1s of start\n(pose extrapolator, not fixed by\ntuning imu_gravity_time_constant)'),
         ('RTAB-Map (pure ICP)', 'outputs/rtabmap_mid360_map.png', None),
         ('LIO-SAM', 'outputs/liosam_mid360_map.png', None),
         ('FAST-LIO2', 'outputs/fastlio_mid360_map.png', None),
