@@ -28,6 +28,13 @@ TILE_SETS = {
         ('LIO-SAM', 'outputs/liosam_mid360_map.png', None),
         ('FAST-LIO2', 'outputs/fastlio_mid360_map.png', None),
     ],
+    'mid360_kidnap': [
+        ('Cartographer 3D', 'outputs/cartographer_mid360_kidnap_map.png',
+         'FAILURE\nsame instant divergence\nas outdoor_hard_01'),
+        ('RTAB-Map (pure ICP)', 'outputs/rtabmap_mid360_kidnap_map.png', None),
+        ('LIO-SAM', 'outputs/liosam_mid360_kidnap_map.png', None),
+        ('FAST-LIO2', 'outputs/fastlio_mid360_kidnap_map.png', None),
+    ],
 }
 DEFAULT_TILES = TILE_SETS['campus']
 

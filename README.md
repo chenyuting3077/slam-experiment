@@ -29,6 +29,21 @@
 
 ![Mid360 四套系統比較圖(Cartographer 發散、RTAB-Map/LIO-SAM 圖中只畫發散/停止前成功追蹤的那一段、FAST-LIO2 完整跑完)](docs/images/mid360/comparison_map_grid_mid360.png)
 
+## 資料集三:Mid360 outdoor_kidnap(同一 Zenodo 資料集,不同情境)
+
+同一個感測器/格式,但這次是官方標示的 **"kidnap"**(重定位)情境,不是「快速運動」。553.8 秒、743.3m,非閉環。
+
+| 系統 | ATE RMSE(成功片段) | 成功追蹤路徑佔比 |
+|---|---|---|
+| Cartographer 3D | ❌ 失敗 | 0% |
+| RTAB-Map(純 ICP) | 0.073m | 5.0% |
+| LIO-SAM | 2.168m | 8.6%(之後姿態直接凍結,不是漸進發散) |
+| FAST-LIO2 | 0.057m | 4.9% |
+
+**最乾淨的發現**:RTAB-Map、LIO-SAM、FAST-LIO2 三套系統畫出來的地圖幾乎是同一個形狀,失敗時間點也都落在路徑的 5~9% 左右——強烈指向那個時間點附近真的發生了一次 kidnap 事件,三套完全不同架構的系統幾乎同時一起失去追蹤。更值得注意的是:**FAST-LIO2 在 outdoor_hard_01 上最穩健(跑完 97%),面對 kidnap 卻是最早失敗的系統之一(4.9%)**——證明「哪套系統更好」高度取決於失敗模式的種類,沒有放諸四海皆準的排名。
+
+![Mid360 kidnap 比較圖](docs/images/mid360_kidnap/comparison_map_grid_mid360_kidnap.png)
+
 ## 目錄結構
 
 - `DATASETS.md` — 兩份資料集的特性、格式差異、四套系統移植細節
