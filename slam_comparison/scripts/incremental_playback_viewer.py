@@ -193,9 +193,10 @@ def main():
     ap.add_argument('--bag', default=DEFAULT_BAG)
     ap.add_argument('--stride', type=int, default=1, help='use every Nth scan')
     ap.add_argument('--voxel', type=float, default=0.5, help='accumulated-cloud voxel size (0=off)')
-    ap.add_argument('--voxel-every', type=int, default=1,
-                     help='re-voxel-merge the accumulated cloud every N scans (1=every scan, '
-                          'so revisited areas merge immediately instead of double-plotting)')
+    ap.add_argument('--voxel-every', type=int, default=15,
+                     help='re-voxel-merge the accumulated cloud every N scans -- doing this on '
+                          'every single scan (1) declutters best but re-downsamples the whole, '
+                          'ever-growing cloud each time, which gets too slow for a full run')
     ap.add_argument('--point-stride', type=int, default=8, help='subsample points within each scan')
     ap.add_argument('--point-size', type=float, default=1.0, help='rendered point size on screen')
     ap.add_argument('--speed', type=float, default=640.0, help='scans per second during playback (~64x the sensor\'s native 10Hz)')
@@ -212,6 +213,9 @@ def main():
                           'height across time and across the four side-by-side windows')
     ap.add_argument('--z-max', type=float, default=8.0,
                      help='fixed height mapped to blue (high end of the rainbow)')
+    ap.add_argument('--floor-cutoff', type=float, default=-1.0,
+                     help='hide points at or below this world-frame height (display only -- '
+                          'does not affect the pose estimates). Set very negative to disable.')
     args = ap.parse_args()
 
     label = Path(args.trajectory).stem
@@ -259,11 +263,28 @@ def main():
     marker_center = np.zeros(3)
 
     accumulated_xyz = []
-    first = True
     cam_params = None
 
+    if not args.no_chase_cam:
+        # Frame the camera on the whole trajectory's center before playback
+        # starts, instead of wherever it happens to open on the first
+        # (near-empty, near one end of the map) point cloud.
+        map_min, map_max = trans.min(axis=0), trans.max(axis=0)
+        map_center = (map_min + map_max) / 2.0
+        map_radius = float(np.linalg.norm((map_max - map_min)[:2])) / 2.0
+        init_height = max(args.chase_height, map_radius * 1.6, 20.0)
+        vis.poll_events()
+        vis.update_renderer()
+        cam_params = vis.get_view_control().convert_to_pinhole_camera_parameters()
+        cam_params.extrinsic = look_at_extrinsic(
+            map_center + np.array([0., 0., init_height]), map_center,
+            up_world=np.array([0., 1., 0.]))
+        vis.get_view_control().convert_from_pinhole_camera_parameters(cam_params, allow_arbitrary=True)
+    else:
+        vis.reset_view_point(True)
+
     def advance():
-        nonlocal accumulated_xyz, first, marker_center
+        nonlocal accumulated_xyz, marker_center
         idx = state['idx']
         if idx >= len(scans):
             return False
@@ -274,6 +295,9 @@ def main():
             return True
         xyz_h = np.hstack([xyz, np.ones((len(xyz), 1), dtype=np.float32)])
         world = (pose @ xyz_h.T).T[:, :3]
+        world = world[world[:, 2] > args.floor_cutoff]
+        if len(world) == 0:
+            return True
         accumulated_xyz.append(world.astype(np.float32))
         traj_points.append(pose[:3, 3].copy())
 
@@ -301,19 +325,17 @@ def main():
         vis.update_geometry(accumulated)
         vis.update_geometry(traj_line)
         vis.update_geometry(current_marker)
-        if first:
-            vis.reset_view_point(True)
-            first = False
-            if not args.no_chase_cam:
-                nonlocal cam_params
-                cam_params = vis.get_view_control().convert_to_pinhole_camera_parameters()
 
         if not args.no_chase_cam and cam_params is not None:
             current = traj_points[-1]
             heading = heading_from_recent(traj_points)
-            eye = current - heading * args.chase_distance + np.array([0., 0., args.chase_height])
-            target = current + heading * 5.0
-            cam_params.extrinsic = look_at_extrinsic(eye, target)
+            # Straight-down top view, directly above the current point;
+            # "up_world" is set to the heading so the view still rotates to
+            # keep the direction of travel pointing to the top of the screen
+            # (like a north-up map that spins with you), instead of tilting.
+            eye = current + np.array([0., 0., args.chase_height])
+            target = current
+            cam_params.extrinsic = look_at_extrinsic(eye, target, up_world=heading)
             vis.get_view_control().convert_from_pinhole_camera_parameters(cam_params, allow_arbitrary=True)
         return True
 
