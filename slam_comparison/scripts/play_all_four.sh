@@ -7,7 +7,7 @@ set -e
 cd "$(dirname "$0")/../.."  # repo root (slam-experiment/)
 
 SCRIPT="slam_comparison/scripts/incremental_playback_viewer.py"
-SPEED="${1:-40}"  # ~4x the sensor's native 10Hz
+SPEED="${1:-160}"  # ~16x the sensor's native 10Hz
 
 # Detect screen size for a 2x2 tiling; fall back to a reasonable default.
 SCREEN=$(xrandr 2>/dev/null | grep ' connected' | grep -oP '\d+x\d+' | head -1)
