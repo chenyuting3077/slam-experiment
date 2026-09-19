@@ -21,6 +21,16 @@ WIN_H=$((SCREEN_H / 2))
 declare -A POS_X=([0]=0 [1]=$WIN_W [2]=0 [3]=$WIN_W)
 declare -A POS_Y=([0]=0 [1]=0 [2]=$WIN_H [3]=$WIN_H)
 
+PIDS=()
+cleanup() {
+    echo "Stopping all viewer windows..."
+    for pid in "${PIDS[@]}"; do
+        kill -9 "$pid" 2>/dev/null
+    done
+    exit 0
+}
+trap cleanup SIGINT SIGTERM
+
 i=0
 for name in cartographer rtabmap liosam fastlio_official; do
     traj="outputs/trajectories/${name}_campus.txt"
@@ -33,6 +43,7 @@ for name in cartographer rtabmap liosam fastlio_official; do
     python3 "$SCRIPT" "$traj" --speed "$SPEED" \
         --win-x "${POS_X[$i]}" --win-y "${POS_Y[$i]}" \
         --win-width "$WIN_W" --win-height "$WIN_H" &
+    PIDS+=("$!")
     i=$((i + 1))
 done
 
