@@ -4,7 +4,7 @@
 # free-run at the same --speed so they stay roughly synchronized -- arrange
 # the four windows on screen to compare drift side by side.
 set -e
-cd "$(dirname "$0")/../../.."  # repo root (slam-experiment/)
+cd "$(dirname "$0")/../.."  # repo root (slam-experiment/)
 
 SCRIPT="slam_comparison/scripts/incremental_playback_viewer.py"
 SPEED="${1:-8}"
