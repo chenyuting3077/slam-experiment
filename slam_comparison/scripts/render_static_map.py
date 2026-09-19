@@ -41,6 +41,11 @@ def main():
     ap.add_argument('--win-height', type=int, default=960)
     ap.add_argument('--cam-height', type=float, default=22.0)
     ap.add_argument('--point-size', type=float, default=1.0)
+    ap.add_argument('--traj-lift-margin', type=float, default=2.0,
+                     help='draw the trajectory tube flat at (point-cloud z-max + this margin) '
+                          'instead of its real height, so it never ends up underneath/behind '
+                          'point-cloud structure from the top-down view. Only affects the '
+                          'tube\'s drawn Z, not the real pose.')
     args = ap.parse_args()
 
     label = Path(args.trajectory).stem
@@ -75,19 +80,22 @@ def main():
     render_cloud.points = o3d.utility.Vector3dVector(pts)
     render_cloud.colors = o3d.utility.Vector3dVector(colors)
 
-    print(f"[{label}] Building trajectory tube ({len(trans)} poses)...")
+    traj_lift_z = float(pts[:, 2].max()) + args.traj_lift_margin if len(pts) else 0.0
+    print(f"[{label}] Drawing trajectory tube flat at z={traj_lift_z:.2f} "
+          f"({len(trans)} poses) so it stays on top of the cloud...")
     traj_mesh = o3d.geometry.TriangleMesh()
     last = None
     for p in trans:
+        p_flat = np.array([p[0], p[1], traj_lift_z])
         if last is None:
-            last = p
+            last = p_flat
             continue
-        if np.linalg.norm(p - last) >= args.traj_seg_dist:
-            seg = cylinder_segment(last, p, args.traj_radius)
+        if np.linalg.norm(p_flat - last) >= args.traj_seg_dist:
+            seg = cylinder_segment(last, p_flat, args.traj_radius)
             if seg is not None:
                 seg.paint_uniform_color([1.0, 1.0, 1.0])
                 traj_mesh += seg
-            last = p
+            last = p_flat
 
     vis = o3d.visualization.Visualizer()
     vis.create_window(window_name=f"Map: {label}", width=args.win_width,

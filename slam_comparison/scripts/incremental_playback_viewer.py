@@ -245,8 +245,10 @@ def main():
     floor = traj_z_min - args.floor_margin
     color_zmin = floor
     color_zmax = max(floor + args.color_span, traj_z_max + args.floor_margin)
+    traj_lift_z = color_zmax + 2.0  # draw the trajectory tube/marker flat up here so
+                                     # they never end up underneath point-cloud structure
     print(f"[{label}] trajectory z=[{traj_z_min:.2f}, {traj_z_max:.2f}] -> floor={floor:.2f}, "
-          f"color range [{color_zmin:.2f}, {color_zmax:.2f}]")
+          f"color range [{color_zmin:.2f}, {color_zmax:.2f}], traj drawn at z={traj_lift_z:.2f}")
     print(f"[{label}] {len(times)} poses. Loading scans from {args.bag} ...")
     scans = load_scans(args.bag, args.point_stride)
     print(f"[{label}] {len(scans)} scans loaded.")
@@ -336,7 +338,7 @@ def main():
             accumulated.colors = down.colors
             accumulated_xyz = [np.asarray(accumulated.points, dtype=np.float32)]
 
-        current_pos = pose[:3, 3]
+        current_pos = np.array([pose[0, 3], pose[1, 3], traj_lift_z])
         if last_seg_point is None:
             last_seg_point = current_pos.copy()
         elif np.linalg.norm(current_pos - last_seg_point) >= args.traj_seg_dist:
@@ -347,8 +349,9 @@ def main():
                 vis.update_geometry(traj_mesh)
             last_seg_point = current_pos.copy()
 
-        current_marker.translate(pose[:3, 3] - marker_center)
-        marker_center = pose[:3, 3].copy()
+        marker_pos = np.array([pose[0, 3], pose[1, 3], traj_lift_z])
+        current_marker.translate(marker_pos - marker_center)
+        marker_center = marker_pos.copy()
 
         vis.update_geometry(accumulated)
         vis.update_geometry(current_marker)
