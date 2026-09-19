@@ -220,15 +220,15 @@ def main():
     ap.add_argument('--win-height', type=int, default=720)
     ap.add_argument('--win-x', type=int, default=50)
     ap.add_argument('--win-y', type=int, default=50)
-    ap.add_argument('--z-min', type=float, default=-3.0,
-                     help='fixed height mapped to red (low end of the rainbow); '
-                          'kept fixed (not auto-rescaled) so color = same absolute '
-                          'height across time and across the four side-by-side windows')
-    ap.add_argument('--z-max', type=float, default=8.0,
-                     help='fixed height mapped to blue (high end of the rainbow)')
-    ap.add_argument('--floor-cutoff', type=float, default=-1.0,
-                     help='hide points at or below this world-frame height (display only -- '
-                          'does not affect the pose estimates). Set very negative to disable.')
+    ap.add_argument('--color-span', type=float, default=11.0,
+                     help='height range (m) mapped across the rainbow, starting from the '
+                          'floor level (trajectory z-min - floor-margin)')
+    ap.add_argument('--floor-margin', type=float, default=1.0,
+                     help='hide points more than this far (m) below the trajectory\'s OWN '
+                          'lowest pose -- relative to each system\'s own z, not a fixed world '
+                          'height, since a system with unconstrained z drift (no loop closure) '
+                          'can sink/rise by tens of meters and a fixed cutoff would wrongly '
+                          'chop out real structure. Set very large to disable.')
     ap.add_argument('--traj-radius', type=float, default=2.0,
                      help='radius (m) of the tube drawn for the trajectory -- a real cylinder '
                           'mesh, not a GL line, since line width caps out at a small hardware max')
@@ -240,6 +240,13 @@ def main():
     label = Path(args.trajectory).stem
     print(f"[{label}] Loading trajectory...")
     times, trans, quats = load_tum(args.trajectory)
+    traj_z_min = float(trans[:, 2].min())
+    traj_z_max = float(trans[:, 2].max())
+    floor = traj_z_min - args.floor_margin
+    color_zmin = floor
+    color_zmax = max(floor + args.color_span, traj_z_max + args.floor_margin)
+    print(f"[{label}] trajectory z=[{traj_z_min:.2f}, {traj_z_max:.2f}] -> floor={floor:.2f}, "
+          f"color range [{color_zmin:.2f}, {color_zmax:.2f}]")
     print(f"[{label}] {len(times)} poses. Loading scans from {args.bag} ...")
     scans = load_scans(args.bag, args.point_stride)
     print(f"[{label}] {len(scans)} scans loaded.")
@@ -312,7 +319,7 @@ def main():
             return True
         xyz_h = np.hstack([xyz, np.ones((len(xyz), 1), dtype=np.float32)])
         world = (pose @ xyz_h.T).T[:, :3]
-        world = world[world[:, 2] > args.floor_cutoff]
+        world = world[world[:, 2] > floor]
         if len(world) == 0:
             return True
         accumulated_xyz.append(world.astype(np.float32))
@@ -322,7 +329,7 @@ def main():
         accumulated.points = o3d.utility.Vector3dVector(merged)
         z = merged[:, 2]
         accumulated.colors = o3d.utility.Vector3dVector(
-            height_rainbow(z, args.z_min, args.z_max))
+            height_rainbow(z, color_zmin, color_zmax))
         if args.voxel > 0 and len(accumulated_xyz) % args.voxel_every == 0:
             down = accumulated.voxel_down_sample(args.voxel)
             accumulated.points = down.points

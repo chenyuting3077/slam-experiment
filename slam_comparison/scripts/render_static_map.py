@@ -28,9 +28,15 @@ def main():
     ap.add_argument('--traj-radius', type=float, default=2.0)
     ap.add_argument('--traj-seg-dist', type=float, default=1.0,
                      help='coarser than the live viewer -- this is a one-shot static render')
-    ap.add_argument('--z-min', type=float, default=-3.0)
-    ap.add_argument('--z-max', type=float, default=8.0)
-    ap.add_argument('--floor-cutoff', type=float, default=-1.0)
+    ap.add_argument('--color-span', type=float, default=11.0,
+                     help='height range (m) mapped across the rainbow, starting from the '
+                          'floor level (trajectory z-min - floor-margin)')
+    ap.add_argument('--floor-margin', type=float, default=1.0,
+                     help='hide points more than this far (m) below the trajectory\'s OWN '
+                          'lowest pose -- relative to each system\'s own z, not a fixed world '
+                          'height, since a system with unconstrained z drift (no loop closure) '
+                          'can sink/rise by tens of meters and a fixed cutoff would wrongly '
+                          'chop out real structure')
     ap.add_argument('--win-width', type=int, default=1280)
     ap.add_argument('--win-height', type=int, default=960)
     ap.add_argument('--cam-height', type=float, default=22.0)
@@ -42,13 +48,29 @@ def main():
 
     print(f"[{label}] Loading trajectory...")
     times, trans, quats = load_tum(args.trajectory)
+    traj_z_min = float(trans[:, 2].min())
+    floor = traj_z_min - args.floor_margin
+    print(f"[{label}] trajectory z-min={traj_z_min:.2f} -> floor={floor:.2f}")
+
     print(f"[{label}] Loading point cloud from {args.cloud} ...")
     cloud = o3d.io.read_point_cloud(args.cloud)
     pts = np.asarray(cloud.points)
     pts = pts[np.isfinite(pts).all(axis=1)]
-    pts = pts[pts[:, 2] > args.floor_cutoff]
+    pts = pts[pts[:, 2] > floor]
     print(f"[{label}] {len(pts)} points after floor cutoff.")
-    colors = height_rainbow(pts[:, 2], args.z_min, args.z_max)
+    # Normalize color to THIS system's own filtered point range, not a fixed
+    # span -- each system's z is on a different scale (some drift tens of
+    # meters, some stay within a couple), so a shared absolute scale would
+    # make most of them look like a single flat color. Normalizing per
+    # system means every render uses the full rainbow and is comparable in
+    # *relative* height variation, even though the same color no longer
+    # means the same absolute height across the four systems.
+    color_zmin = floor
+    color_zmax = float(pts[:, 2].max()) if len(pts) else floor + args.color_span
+    if color_zmax <= color_zmin:
+        color_zmax = color_zmin + 1e-3
+    print(f"[{label}] color range [{color_zmin:.2f}, {color_zmax:.2f}] (normalized)")
+    colors = height_rainbow(pts[:, 2], color_zmin, color_zmax)
     render_cloud = o3d.geometry.PointCloud()
     render_cloud.points = o3d.utility.Vector3dVector(pts)
     render_cloud.colors = o3d.utility.Vector3dVector(colors)
