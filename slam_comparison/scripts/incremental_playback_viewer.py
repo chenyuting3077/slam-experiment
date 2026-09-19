@@ -192,7 +192,10 @@ def main():
     ap.add_argument('trajectory')
     ap.add_argument('--bag', default=DEFAULT_BAG)
     ap.add_argument('--stride', type=int, default=1, help='use every Nth scan')
-    ap.add_argument('--voxel', type=float, default=0.15, help='accumulated-cloud voxel size (0=off)')
+    ap.add_argument('--voxel', type=float, default=0.3, help='accumulated-cloud voxel size (0=off)')
+    ap.add_argument('--voxel-every', type=int, default=1,
+                     help='re-voxel-merge the accumulated cloud every N scans (1=every scan, '
+                          'so revisited areas merge immediately instead of double-plotting)')
     ap.add_argument('--point-stride', type=int, default=4, help='subsample points within each scan')
     ap.add_argument('--speed', type=float, default=20.0, help='scans per second during playback (~2x the sensor\'s native 10Hz)')
     ap.add_argument('--no-chase-cam', action='store_true', help='use a fixed bird\'s-eye view instead')
@@ -278,7 +281,7 @@ def main():
         z = merged[:, 2]
         accumulated.colors = o3d.utility.Vector3dVector(
             height_rainbow(z, args.z_min, args.z_max))
-        if args.voxel > 0 and len(accumulated_xyz) % 20 == 0:
+        if args.voxel > 0 and len(accumulated_xyz) % args.voxel_every == 0:
             down = accumulated.voxel_down_sample(args.voxel)
             accumulated.points = down.points
             accumulated.colors = down.colors
