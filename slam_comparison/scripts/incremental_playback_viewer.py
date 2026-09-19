@@ -150,10 +150,38 @@ def look_at_extrinsic(eye, target, up_world=np.array([0., 0., 1.])):
     return extrinsic
 
 
-def height_rainbow(z, zmin, zmax):
+def cylinder_segment(p0, p1, radius, resolution=8):
+    """A short cylinder mesh from p0 to p1 -- used to draw the trajectory as
+    an actual tube instead of a GL line, since aliased line width is capped
+    at a small hardware maximum (looked no thicker past ~10px in testing)
+    regardless of what render_option.line_width is set to."""
+    p0 = np.asarray(p0, dtype=np.float64)
+    p1 = np.asarray(p1, dtype=np.float64)
+    vec = p1 - p0
+    height = np.linalg.norm(vec)
+    if height < 1e-6:
+        return None
+    cyl = o3d.geometry.TriangleMesh.create_cylinder(
+        radius=radius, height=height, resolution=resolution, split=1)
+    axis = vec / height
+    z = np.array([0., 0., 1.])
+    v = np.cross(z, axis)
+    c = float(np.dot(z, axis))
+    if np.linalg.norm(v) < 1e-8:
+        rot = np.eye(3) if c > 0 else -np.eye(3)
+    else:
+        vx = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+        rot = np.eye(3) + vx + vx @ vx * (1.0 / (1.0 + c))
+    cyl.rotate(rot, center=(0, 0, 0))
+    cyl.translate((p0 + p1) / 2.0)
+    return cyl
+
+
+def height_rainbow(z, zmin, zmax, darken=0.55):
     """RViz-style AxisColor rainbow: hue sweeps red -> yellow -> green ->
     cyan -> blue as height increases (matches the LIO-SAM README demo gif's
-    look), instead of a plain two-color blend."""
+    look), instead of a plain two-color blend. Scaled down by `darken` so
+    the white trajectory line reads clearly against the point cloud."""
     span = max(zmax - zmin, 1e-6)
     t = np.clip((z - zmin) / span, 0.0, 1.0)
     hue = t * (240.0 / 360.0)  # low=red(0) -> yellow -> green -> blue(high)
@@ -169,7 +197,7 @@ def height_rainbow(z, zmin, zmax):
         colors[mask, 0] = r[mask] if hasattr(r, '__len__') else r
         colors[mask, 1] = g[mask] if hasattr(g, '__len__') else g
         colors[mask, 2] = b[mask] if hasattr(b, '__len__') else b
-    return colors
+    return colors * darken
 
 
 def main():
@@ -184,7 +212,7 @@ def main():
                           'ever-growing cloud each time, which gets too slow for a full run')
     ap.add_argument('--point-stride', type=int, default=8, help='subsample points within each scan')
     ap.add_argument('--point-size', type=float, default=1.0, help='rendered point size on screen')
-    ap.add_argument('--speed', type=float, default=640.0, help='scans per second during playback (~64x the sensor\'s native 10Hz)')
+    ap.add_argument('--speed', type=float, default=5120.0, help='scans per second during playback (~512x the sensor\'s native 10Hz)')
     ap.add_argument('--cam-height', type=float, default=22.0,
                      help='minimum camera height above the map (m); actually raised as '
                           'needed to fit the whole trajectory in frame')
@@ -201,6 +229,12 @@ def main():
     ap.add_argument('--floor-cutoff', type=float, default=-1.0,
                      help='hide points at or below this world-frame height (display only -- '
                           'does not affect the pose estimates). Set very negative to disable.')
+    ap.add_argument('--traj-radius', type=float, default=2.0,
+                     help='radius (m) of the tube drawn for the trajectory -- a real cylinder '
+                          'mesh, not a GL line, since line width caps out at a small hardware max')
+    ap.add_argument('--traj-seg-dist', type=float, default=0.3,
+                     help='only add a new trajectory tube segment once the pose has moved at '
+                          'least this far (m) -- keeps segment count reasonable')
     args = ap.parse_args()
 
     label = Path(args.trajectory).stem
@@ -234,12 +268,13 @@ def main():
     vis.register_key_callback(256, quit_now)      # Esc
 
     accumulated = o3d.geometry.PointCloud()
-    traj_line = o3d.geometry.LineSet()
+    traj_mesh = o3d.geometry.TriangleMesh()
     current_marker = o3d.geometry.TriangleMesh.create_sphere(radius=0.6)
     current_marker.paint_uniform_color([1.0, 0.15, 0.15])
     traj_points = []
+    last_seg_point = None
     vis.add_geometry(accumulated)
-    vis.add_geometry(traj_line)
+    vis.add_geometry(traj_mesh)
     vis.add_geometry(current_marker)
 
     render_opt = vis.get_render_option()
@@ -266,7 +301,7 @@ def main():
     vis.get_view_control().convert_from_pinhole_camera_parameters(cam_params, allow_arbitrary=True)
 
     def advance():
-        nonlocal accumulated_xyz, marker_center
+        nonlocal accumulated_xyz, marker_center, last_seg_point, traj_mesh
         idx = state['idx']
         if idx >= len(scans):
             return False
@@ -294,18 +329,21 @@ def main():
             accumulated.colors = down.colors
             accumulated_xyz = [np.asarray(accumulated.points, dtype=np.float32)]
 
-        traj_line.points = o3d.utility.Vector3dVector(np.array(traj_points))
-        if len(traj_points) > 1:
-            lines = [[i, i + 1] for i in range(len(traj_points) - 1)]
-            traj_line.lines = o3d.utility.Vector2iVector(lines)
-            traj_line.colors = o3d.utility.Vector3dVector(
-                [[0.4, 1.0, 1.0] for _ in lines])  # cyan, like the reference gif
+        current_pos = pose[:3, 3]
+        if last_seg_point is None:
+            last_seg_point = current_pos.copy()
+        elif np.linalg.norm(current_pos - last_seg_point) >= args.traj_seg_dist:
+            seg = cylinder_segment(last_seg_point, current_pos, args.traj_radius)
+            if seg is not None:
+                seg.paint_uniform_color([1.0, 1.0, 1.0])
+                traj_mesh += seg
+                vis.update_geometry(traj_mesh)
+            last_seg_point = current_pos.copy()
 
         current_marker.translate(pose[:3, 3] - marker_center)
         marker_center = pose[:3, 3].copy()
 
         vis.update_geometry(accumulated)
-        vis.update_geometry(traj_line)
         vis.update_geometry(current_marker)
         return True
 
@@ -315,6 +353,10 @@ def main():
     while not state['quit']:
         if not vis.poll_events():
             break
+        # Re-lock the camera every frame -- Open3D's default mouse
+        # drag/scroll handlers are still live and would otherwise let an
+        # accidental scroll pan/zoom the "fixed" view away.
+        vis.get_view_control().convert_from_pinhole_camera_parameters(cam_params, allow_arbitrary=True)
         vis.update_renderer()
         now = time.time()
         if state['step']:
