@@ -46,7 +46,8 @@ DEFAULT_BAG = '/home/allen/slam-experiment/data/campus_dataset_ros2'
 
 
 def load_tum(path):
-    times, poses = [], []
+    """Returns times, translations (N,3), quaternions (N,4) as (x,y,z,w)."""
+    times, trans, quats = [], [], []
     with open(path) as f:
         for line in f:
             parts = line.split()
@@ -54,19 +55,62 @@ def load_tum(path):
                 continue
             t = float(parts[0])
             x, y, z, qx, qy, qz, qw = (float(v) for v in parts[1:8])
-            n = qx * qx + qy * qy + qz * qz + qw * qw
-            s = 2.0 / n
-            rot = np.array([
-                [1 - s * (qy * qy + qz * qz), s * (qx * qy - qz * qw), s * (qx * qz + qy * qw)],
-                [s * (qx * qy + qz * qw), 1 - s * (qx * qx + qz * qz), s * (qy * qz - qx * qw)],
-                [s * (qx * qz - qy * qw), s * (qy * qz + qx * qw), 1 - s * (qx * qx + qy * qy)],
-            ])
-            transform = np.eye(4)
-            transform[:3, :3] = rot
-            transform[:3, 3] = [x, y, z]
             times.append(t)
-            poses.append(transform)
-    return np.array(times), poses
+            trans.append([x, y, z])
+            quats.append([qx, qy, qz, qw])
+    return np.array(times), np.array(trans), np.array(quats)
+
+
+def quat_to_matrix(q):
+    qx, qy, qz, qw = q
+    n = qx * qx + qy * qy + qz * qz + qw * qw
+    s = 2.0 / n
+    return np.array([
+        [1 - s * (qy * qy + qz * qz), s * (qx * qy - qz * qw), s * (qx * qz + qy * qw)],
+        [s * (qx * qy + qz * qw), 1 - s * (qx * qx + qz * qz), s * (qy * qz - qx * qw)],
+        [s * (qx * qz - qy * qw), s * (qy * qz + qx * qw), 1 - s * (qx * qx + qy * qy)],
+    ])
+
+
+def slerp(q0, q1, alpha):
+    dot = np.dot(q0, q1)
+    if dot < 0:
+        q1 = -q1
+        dot = -dot
+    dot = min(dot, 1.0)
+    if dot > 0.9995:
+        result = q0 + alpha * (q1 - q0)
+        return result / np.linalg.norm(result)
+    theta0 = np.arccos(dot)
+    theta = theta0 * alpha
+    q2 = q1 - q0 * dot
+    q2 /= np.linalg.norm(q2)
+    return q0 * np.cos(theta) + q2 * np.sin(theta)
+
+
+def interpolate_pose(times, trans, quats, t):
+    """Linear/slerp interpolation between the two bracketing keyframes --
+    holding "nearest" instead causes visible camera stutter/jumps for
+    systems with sparse keyframes (RTAB-Map, LIO-SAM, FAST-LIO2 all have
+    far fewer poses than there are scans; only Cartographer is ~1:1)."""
+    i = np.searchsorted(times, t)
+    if i <= 0:
+        i = 1
+    if i >= len(times):
+        i = len(times) - 1
+    if t < times[0] - 2.0 or t > times[-1] + 2.0:
+        return None  # well outside the trajectory's time range altogether
+    t0, t1 = times[i - 1], times[i]
+    if t1 - t0 < 1e-9:
+        alpha = 0.0
+    else:
+        alpha = np.clip((t - t0) / (t1 - t0), 0.0, 1.0)
+    position = trans[i - 1] * (1 - alpha) + trans[i] * alpha
+    rot = quat_to_matrix(slerp(quats[i - 1], quats[i], alpha))
+    transform = np.eye(4)
+    transform[:3, :3] = rot
+    transform[:3, 3] = position
+    return transform
 
 
 def load_scans(bag_path, point_stride):
@@ -83,17 +127,6 @@ def load_scans(bag_path, point_stride):
             xyz = xyz[np.isfinite(xyz).all(axis=1)]
             scans.append((timestamp / 1e9, xyz))
     return scans
-
-
-def nearest_pose(times, poses, t, max_dt=0.5):
-    i = np.searchsorted(times, t)
-    if i == 0 or i >= len(times):
-        return None
-    if abs(times[i] - t) > abs(times[i - 1] - t):
-        i -= 1
-    if abs(times[i] - t) > max_dt:
-        return None
-    return poses[i]
 
 
 def look_at_extrinsic(eye, target, up_world=np.array([0., 0., 1.])):
@@ -147,7 +180,7 @@ def main():
 
     label = Path(args.trajectory).stem
     print(f"[{label}] Loading trajectory...")
-    times, poses = load_tum(args.trajectory)
+    times, trans, quats = load_tum(args.trajectory)
     print(f"[{label}] {len(times)} poses. Loading scans from {args.bag} ...")
     scans = load_scans(args.bag, args.point_stride)
     print(f"[{label}] {len(scans)} scans loaded.")
@@ -193,7 +226,7 @@ def main():
         if idx >= len(scans):
             return False
         t, xyz = scans[idx]
-        pose = nearest_pose(times, poses, t)
+        pose = interpolate_pose(times, trans, quats, t)
         state['idx'] = idx + args.stride
         if pose is None or len(xyz) == 0:
             return True
