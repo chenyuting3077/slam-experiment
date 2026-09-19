@@ -6,17 +6,20 @@
 
 | 指標 | LOAM(論文) | LIO-odom(論文) | LIO-GPS(論文) | LIO-SAM(論文) | **Cartographer 3D(本次實測)** | **RTAB-Map(本次實測)** | **LIO-SAM(本次實測)** | **FAST-LIO2(本次實測)** |
 |---|---|---|---|---|---|---|---|---|
-| End-to-end translation error (m) | 192.43 | 9.44 | 6.87 | 0.12 | **34.69** | **256.06** | **0.288** | 失敗 |
-| 軌跡長度 (m) | — | — | — | — | 1441.45 | 1418.01 | 1432.82 | — |
+| End-to-end translation error (m) | 192.43 | 9.44 | 6.87 | 0.12 | **31.67**(調參前 34.69) | **256.06** | **0.288** | 失敗 |
+| 軌跡長度 (m) | — | — | — | — | 1444.15 | 1418.01 | 1432.82 | — |
 | Real-time factor | — | — | — | 官方稱可達 10x | ~1.0(即時) | ~1.0(即時) | ~1.0(即時) | — |
-| Loop closure 數量 | — | — | — | — | **0** | **0** | 有效(調參後,見下) | — |
+| Loop closure 數量 | — | — | — | — | **20**(調參後,調參前 0) | **0** | 有效(調參後,見下) | — |
 | 地圖品質(定性) | — | — | — | — | 31.7M 點,結構完整但終點漂移明顯 | 15.4M 點,z 方向嚴重漂移(見下) | 完整全域地圖(Corner+Surf ~110MB×2),終點幾乎完全閉合 | 無(mapping 中途損壞) |
 
 ## 各系統詳細結果
 
-### Cartographer 3D — ✅ 成功
+### Cartographer 3D — ✅ 成功,調參後終點誤差 31.67m(有找到迴環,但改善有限)
 - 原計畫用 `cartographer_offline_node`(非即時、快速),但該 ROS2 port 的 bag 內部 topic 比對邏輯有 bug,即使 `-r` remap 參數正確出現在 argv 上也完全不會把資料餵進演算法(pbstream 只有 520 bytes、0 submap、0 constraint)。改用 **live 版 `cartographer_node`** 配合即時 `ros2 bag play`,才真正跑起來(62 個 submap、9844 個 trajectory node)。
-- 終點誤差 34.69m。`POSE_GRAPH.constraint_builder` 全程回報 **0 additional constraints**——這個設定(`sampling_ratio=0.03`、`min_score=0.62`)在這條路徑上完全沒找到有效回環,這也是終點漂移的主因。
+- **第一輪**(`sampling_ratio=0.03`、`min_score=0.62`,比官方預設更保守):終點誤差 34.69m,`POSE_GRAPH.constraint_builder` 全程回報 **0 additional constraints**,完全沒找到回環。
+  - 根因跟 LIO-SAM 同一類:官方預設 `constraint_builder.max_constraint_distance = 15.0`,只在submap 中心點相距 15m 內才會嘗試建立 constraint。真實 ICP/LiDAR 里程計在 1437m 戶外大迴圈上的漂移,回到起點附近時很可能已經超過 15m。
+  - **修正:`max_constraint_distance` 15→60,`sampling_ratio` 改回官方預設 0.3 附近(取 0.5 更寬鬆),`min_score`/`global_localization_min_score` 改回官方預設 0.55/0.6** → 這次真的找到 **20 個 additional constraints**(分散在整趟路徑的 76~1004 秒之間,代表軌跡中途多次交叉都成功配對,不是只有結尾一次)。
+  - 但終點誤差只從 34.69m 降到 **31.67m**,改善幅度遠不如 LIO-SAM(38.06m→0.288m)。推測原因:Cartographer 的 constraint builder 是機會式地在整個路徑上找任意 submap 配對,不像 LIO-SAM 每個新 keyframe 都明確去跟全部歷史配對——這 20 個 constraint 修正的是路徑中途的局部交叉,不保證包含「終點跟起點」這條最關鍵的連結;而且 Cartographer 3D 預設的 `pose_extrapolator` 是**等速度模型**,不是像 LIO-SAM/FAST-LIO2 那樣的緊耦合 IMU 預積分,原始里程計本身的漂移量就比較大,回環修正的起始條件較差。詳見文末分析。
 - 點雲(`cartographer_campus.pcd`,31.7M 點)是我們自己寫的腳本,用 Cartographer 匯出的軌跡把原始 `/points_raw` 逐幀轉到世界座標系累積而成,**不是**用官方 `cartographer_assets_writer`——那個工具內部有個寫死的 grid bit 上限(`hybrid_grid.h: new_bits <= 8`),處理這種大範圍戶外地圖時必定 crash(`Check failed: new_bits <= 8 (9 vs. 8)`),無法透過設定檔調整。
 
 ### RTAB-Map(純 LiDAR ICP 模式) — ✅ 成功
@@ -44,7 +47,7 @@
 ## 誠實限制與注意事項
 
 1. **Cartographer、RTAB-Map、LIO-SAM 數字是本次實測結果;LOAM/LIO-odom/LIO-GPS/LIO-SAM 論文數字為引用值**,不是同一硬體/同一次執行環境下的公平競賽,只能當參考基準。
-2. **Cartographer 與 RTAB-Map 在這條路徑上都沒有找到有效的 loop closure**,是它們終點誤差偏高的主要原因。這些系統的預設/移植版參數並未針對這個資料集調優,調整回環偵測參數(Cartographer 的 `min_score`/`sampling_ratio`、RTAB-Map 的 ICP 對應距離)有機會改善,但超出本次任務範圍——**LIO-SAM 的 `historyKeyframeSearchRadius` 已經證實過這個假設**(15.0→60.0m,終點誤差 38.06m→0.288m),同一套邏輯應該也能用在另外兩套系統上。
+2. **三套系統的迴環搜尋半徑類參數預設值都偏小**(Cartographer `max_constraint_distance`、RTAB-Map `RGBD/LocalRadius`、LIO-SAM `historyKeyframeSearchRadius` 全部預設 10~15m),調寬之後 LIO-SAM 幾乎完全修正(38.06m→0.288m),Cartographer 找到迴環但改善有限(34.69m→31.67m)。這證明「找不到迴環候選」跟「找到迴環候選但修正效果不夠」是兩個不同層次的問題,後者跟系統的里程計精度/迴環權重設計更相關,不是單一參數能解決的。
 3. Campus 資料集沒有精確 ground truth(GPS/MoCap),End-to-end translation error 是唯一能直接對照論文的量化指標,無法計算完整 ATE/RPE。
 4. Cartographer 改用 live node 而非原計畫的 offline node,實際執行是「即時播放」而非論文 LIO-SAM 宣稱的「10 倍加速」,real-time factor 因此都落在 ~1.0 附近,無法直接對照 LIO-SAM 論文的加速倍數描述。
 5. RTAB-Map 是在「純 LiDAR ICP 模式」下測試,並非其原本以視覺回環見長的典型使用場景,這裡的數字不能代表 RTAB-Map 在視覺/RGB-D 場景下的真實實力。

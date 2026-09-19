@@ -31,7 +31,7 @@ def generate_launch_description():
 
     rtabmap_parameters = {
         'frame_id': 'base_link',
-        'database_path': '/home/allen/slam-experiment/outputs/rtabmap_campus.db',
+        'database_path': '/home/allen/slam-experiment/outputs/rtabmap_campus_v2.db',
         'subscribe_rgb': False,
         'subscribe_depth': False,
         'subscribe_scan_cloud': True,
@@ -43,6 +43,15 @@ def generate_launch_description():
         'Icp/RangeMin': '0.5',
         'Icp/RangeMax': '100',
         'RGBD/OptimizeMaxError': '0.3',
+        # Default 10m -- the same class of "search radius too small" bug we
+        # found (and fixed) in Cartographer's max_constraint_distance and
+        # LIO-SAM's historyKeyframeSearchRadius, both also defaulted to 15m.
+        # 981 nodes, zero loop-closure-type links found on our first run --
+        # RGBD/ProximityBySpace (already true by default) needs this widened
+        # so a revisited place is still considered "local" despite real ICP
+        # drift on a 1437m outdoor loop.
+        'RGBD/LocalRadius': '60',
+        'RGBD/ProximityMaxGraphDepth': '0',  # 0 = no limit (default 50 nodes back)
     }
 
     shared_parameters = {
