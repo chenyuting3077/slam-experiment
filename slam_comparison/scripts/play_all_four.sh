@@ -1,8 +1,8 @@
 #!/bin/bash
 # Launch all four systems' incremental playback viewers at once, each in
-# its own window (tiled 2x2, non-overlapping) with a chase camera following
-# its own trajectory. They free-run at the same --speed so they stay
-# roughly synchronized -- compare drift side by side.
+# its own window (tiled 2x2, non-overlapping), camera fixed straight down
+# on the whole map's center for the whole run. They free-run at the same
+# --speed so they stay roughly synchronized -- compare drift side by side.
 set -e
 cd "$(dirname "$0")/../.."  # repo root (slam-experiment/)
 

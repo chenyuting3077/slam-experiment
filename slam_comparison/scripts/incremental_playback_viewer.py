@@ -12,13 +12,12 @@ comparison of "how each system's estimated poses place the same raw scans".
 Usage:
   python3 incremental_playback_viewer.py <trajectory.txt> [--bag PATH]
       [--stride N] [--voxel SIZE] [--point-stride N] [--speed FPS]
-      [--no-chase-cam] [--chase-distance M] [--chase-height M]
+      [--cam-height M]
 
-By default the camera chases the current trajectory point from behind and
-above, facing the direction of travel (computed from recent displacement,
-not the pose's own orientation, so it stays stable even if a system's
-heading estimate is noisy). Pass --no-chase-cam for the old fixed
-bird's-eye view instead.
+The camera is fixed, straight down, centered on the whole trajectory's
+bounding-box center, set once before playback starts and never moved --
+so you can watch the trajectory and map grow within a stable frame
+instead of the view chasing/spinning around the current point.
 
 To watch all four systems side by side at once, just launch four of these
 in parallel (they free-run at the same --speed, so they stay roughly in
@@ -151,20 +150,6 @@ def look_at_extrinsic(eye, target, up_world=np.array([0., 0., 1.])):
     return extrinsic
 
 
-def heading_from_recent(traj_points, window=5):
-    """Direction of travel from recent displacement, not pose orientation
-    (robust to a noisy/rolling heading estimate)."""
-    if len(traj_points) < 2:
-        return np.array([1., 0., 0.])
-    recent = traj_points[-window:]
-    delta = recent[-1] - recent[0]
-    delta[2] = 0.  # keep the chase camera level; don't pitch with terrain
-    n = np.linalg.norm(delta)
-    if n < 1e-3:
-        return np.array([1., 0., 0.])
-    return delta / n
-
-
 def height_rainbow(z, zmin, zmax):
     """RViz-style AxisColor rainbow: hue sweeps red -> yellow -> green ->
     cyan -> blue as height increases (matches the LIO-SAM README demo gif's
@@ -200,9 +185,9 @@ def main():
     ap.add_argument('--point-stride', type=int, default=8, help='subsample points within each scan')
     ap.add_argument('--point-size', type=float, default=1.0, help='rendered point size on screen')
     ap.add_argument('--speed', type=float, default=640.0, help='scans per second during playback (~64x the sensor\'s native 10Hz)')
-    ap.add_argument('--no-chase-cam', action='store_true', help='use a fixed bird\'s-eye view instead')
-    ap.add_argument('--chase-distance', type=float, default=7.0, help='camera distance behind current point (m)')
-    ap.add_argument('--chase-height', type=float, default=22.0, help='camera height above current point (m)')
+    ap.add_argument('--cam-height', type=float, default=22.0,
+                     help='minimum camera height above the map (m); actually raised as '
+                          'needed to fit the whole trajectory in frame')
     ap.add_argument('--win-width', type=int, default=960)
     ap.add_argument('--win-height', type=int, default=720)
     ap.add_argument('--win-x', type=int, default=50)
@@ -263,25 +248,22 @@ def main():
     marker_center = np.zeros(3)
 
     accumulated_xyz = []
-    cam_params = None
 
-    if not args.no_chase_cam:
-        # Frame the camera on the whole trajectory's center before playback
-        # starts, instead of wherever it happens to open on the first
-        # (near-empty, near one end of the map) point cloud.
-        map_min, map_max = trans.min(axis=0), trans.max(axis=0)
-        map_center = (map_min + map_max) / 2.0
-        map_radius = float(np.linalg.norm((map_max - map_min)[:2])) / 2.0
-        init_height = max(args.chase_height, map_radius * 1.6, 20.0)
-        vis.poll_events()
-        vis.update_renderer()
-        cam_params = vis.get_view_control().convert_to_pinhole_camera_parameters()
-        cam_params.extrinsic = look_at_extrinsic(
-            map_center + np.array([0., 0., init_height]), map_center,
-            up_world=np.array([0., 1., 0.]))
-        vis.get_view_control().convert_from_pinhole_camera_parameters(cam_params, allow_arbitrary=True)
-    else:
-        vis.reset_view_point(True)
+    # Frame the camera on the whole trajectory's bounding-box center, high
+    # enough to fit its whole extent, once before playback starts -- and
+    # never touch it again, so the view stays put while the map/trajectory
+    # grow inside it.
+    map_min, map_max = trans.min(axis=0), trans.max(axis=0)
+    map_center = (map_min + map_max) / 2.0
+    map_radius = float(np.linalg.norm((map_max - map_min)[:2])) / 2.0
+    init_height = max(args.cam_height, map_radius * 1.6, 20.0)
+    vis.poll_events()
+    vis.update_renderer()
+    cam_params = vis.get_view_control().convert_to_pinhole_camera_parameters()
+    cam_params.extrinsic = look_at_extrinsic(
+        map_center + np.array([0., 0., init_height]), map_center,
+        up_world=np.array([0., 1., 0.]))
+    vis.get_view_control().convert_from_pinhole_camera_parameters(cam_params, allow_arbitrary=True)
 
     def advance():
         nonlocal accumulated_xyz, marker_center
@@ -325,18 +307,6 @@ def main():
         vis.update_geometry(accumulated)
         vis.update_geometry(traj_line)
         vis.update_geometry(current_marker)
-
-        if not args.no_chase_cam and cam_params is not None:
-            current = traj_points[-1]
-            heading = heading_from_recent(traj_points)
-            # Straight-down top view, directly above the current point;
-            # "up_world" is set to the heading so the view still rotates to
-            # keep the direction of travel pointing to the top of the screen
-            # (like a north-up map that spins with you), instead of tilting.
-            eye = current + np.array([0., 0., args.chase_height])
-            target = current
-            cam_params.extrinsic = look_at_extrinsic(eye, target, up_world=heading)
-            vis.get_view_control().convert_from_pinhole_camera_parameters(cam_params, allow_arbitrary=True)
         return True
 
     print("Controls: Space=pause/resume, Right-arrow=step, Q/Esc=quit")
