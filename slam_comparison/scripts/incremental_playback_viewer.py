@@ -12,8 +12,22 @@ comparison of "how each system's estimated poses place the same raw scans".
 Usage:
   python3 incremental_playback_viewer.py <trajectory.txt> [--bag PATH]
       [--stride N] [--voxel SIZE] [--point-stride N] [--speed FPS]
+      [--no-chase-cam] [--chase-distance M] [--chase-height M]
 
-Controls once the window opens:
+By default the camera chases the current trajectory point from behind and
+above, facing the direction of travel (computed from recent displacement,
+not the pose's own orientation, so it stays stable even if a system's
+heading estimate is noisy). Pass --no-chase-cam for the old fixed
+bird's-eye view instead.
+
+To watch all four systems side by side at once, just launch four of these
+in parallel (they free-run at the same --speed, so they stay roughly in
+sync):
+  for f in cartographer rtabmap liosam fastlio_official; do
+    python3 incremental_playback_viewer.py outputs/trajectories/${f}_campus.txt &
+  done
+
+Controls once a window is focused:
   Space       pause / resume
   Right arrow step forward one scan while paused
   Q / Esc     quit
@@ -82,6 +96,42 @@ def nearest_pose(times, poses, t, max_dt=0.5):
     return poses[i]
 
 
+def look_at_extrinsic(eye, target, up_world=np.array([0., 0., 1.])):
+    """World-to-camera 4x4 (OpenCV/Open3D convention: +Z forward into the
+    scene, +X right, +Y down)."""
+    z_cam = target - eye
+    norm = np.linalg.norm(z_cam)
+    if norm < 1e-6:
+        z_cam = np.array([1., 0., 0.])
+    else:
+        z_cam = z_cam / norm
+    if abs(np.dot(z_cam, up_world)) > 0.999:
+        up_world = np.array([0., 1., 0.])
+    x_cam = np.cross(z_cam, up_world)
+    x_cam /= np.linalg.norm(x_cam)
+    y_cam = np.cross(z_cam, x_cam)
+    r_c2w = np.stack([x_cam, y_cam, z_cam], axis=1)
+    r_w2c = r_c2w.T
+    extrinsic = np.eye(4)
+    extrinsic[:3, :3] = r_w2c
+    extrinsic[:3, 3] = -r_w2c @ eye
+    return extrinsic
+
+
+def heading_from_recent(traj_points, window=5):
+    """Direction of travel from recent displacement, not pose orientation
+    (robust to a noisy/rolling heading estimate)."""
+    if len(traj_points) < 2:
+        return np.array([1., 0., 0.])
+    recent = traj_points[-window:]
+    delta = recent[-1] - recent[0]
+    delta[2] = 0.  # keep the chase camera level; don't pitch with terrain
+    n = np.linalg.norm(delta)
+    if n < 1e-3:
+        return np.array([1., 0., 0.])
+    return delta / n
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('trajectory')
@@ -90,6 +140,9 @@ def main():
     ap.add_argument('--voxel', type=float, default=0.15, help='accumulated-cloud voxel size (0=off)')
     ap.add_argument('--point-stride', type=int, default=4, help='subsample points within each scan')
     ap.add_argument('--speed', type=float, default=8.0, help='scans per second during playback')
+    ap.add_argument('--no-chase-cam', action='store_true', help='use a fixed bird\'s-eye view instead')
+    ap.add_argument('--chase-distance', type=float, default=15.0, help='camera distance behind current point (m)')
+    ap.add_argument('--chase-height', type=float, default=8.0, help='camera height above current point (m)')
     args = ap.parse_args()
 
     label = Path(args.trajectory).stem
@@ -132,6 +185,7 @@ def main():
 
     accumulated_xyz = []
     first = True
+    cam_params = None
 
     def advance():
         nonlocal accumulated_xyz, first
@@ -174,6 +228,17 @@ def main():
         if first:
             vis.reset_view_point(True)
             first = False
+            if not args.no_chase_cam:
+                nonlocal cam_params
+                cam_params = vis.get_view_control().convert_to_pinhole_camera_parameters()
+
+        if not args.no_chase_cam and cam_params is not None:
+            current = traj_points[-1]
+            heading = heading_from_recent(traj_points)
+            eye = current - heading * args.chase_distance + np.array([0., 0., args.chase_height])
+            target = current + heading * 5.0
+            cam_params.extrinsic = look_at_extrinsic(eye, target)
+            vis.get_view_control().convert_from_pinhole_camera_parameters(cam_params, allow_arbitrary=True)
         return True
 
     print("Controls: Space=pause/resume, Right-arrow=step, Q/Esc=quit")
