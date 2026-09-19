@@ -106,13 +106,25 @@ def main():
     ro.point_size = args.point_size
     ro.background_color = np.array([0.0, 0.0, 0.0])
 
-    map_min, map_max = trans.min(axis=0), trans.max(axis=0)
-    map_center = (map_min + map_max) / 2.0
-    map_radius = float(np.linalg.norm((map_max - map_min)[:2])) / 2.0
-    init_height = max(args.cam_height, map_radius * 1.6, 20.0)
+    # Frame on the union of the trajectory AND the point cloud's own extent --
+    # buildings/trees can stick out past the trajectory's bounding box, and
+    # cropping them was exactly the earlier "PNG isn't complete" complaint.
+    xy_min = np.minimum(trans[:, :2].min(axis=0), pts[:, :2].min(axis=0)) if len(pts) else trans[:, :2].min(axis=0)
+    xy_max = np.maximum(trans[:, :2].max(axis=0), pts[:, :2].max(axis=0)) if len(pts) else trans[:, :2].max(axis=0)
+    map_center_xy = (xy_min + xy_max) / 2.0
+    map_center = np.array([map_center_xy[0], map_center_xy[1], float(trans[:, 2].mean())])
+    half_extent = (xy_max - xy_min) / 2.0
+
     vis.poll_events()
     vis.update_renderer()
     cam = vis.get_view_control().convert_to_pinhole_camera_parameters()
+    fx, fy = cam.intrinsic.intrinsic_matrix[0, 0], cam.intrinsic.intrinsic_matrix[1, 1]
+    w, h = cam.intrinsic.width, cam.intrinsic.height
+    margin = 1.15  # a bit of headroom past the exact fit
+    height_for_x = half_extent[0] * margin * fx / (w / 2.0)
+    height_for_y = half_extent[1] * margin * fy / (h / 2.0)
+    init_height = max(args.cam_height, height_for_x, height_for_y, 20.0)
+    print(f"[{label}] framing: xy half-extent={half_extent}, camera height={init_height:.1f}m")
     cam.extrinsic = look_at_extrinsic(
         map_center + np.array([0., 0., init_height]), map_center,
         up_world=np.array([0., 1., 0.]))

@@ -294,16 +294,22 @@ def main():
     accumulated_xyz = []
 
     # Frame the camera on the whole trajectory's bounding-box center, high
-    # enough to fit its whole extent, once before playback starts -- and
-    # never touch it again, so the view stays put while the map/trajectory
-    # grow inside it.
+    # enough to fit its whole extent (plus a fixed pad for structure that
+    # sticks out past the trajectory itself, e.g. a building set back from
+    # the path), once before playback starts -- and never touch it again,
+    # so the view stays put while the map/trajectory grow inside it.
     map_min, map_max = trans.min(axis=0), trans.max(axis=0)
     map_center = (map_min + map_max) / 2.0
-    map_radius = float(np.linalg.norm((map_max - map_min)[:2])) / 2.0
-    init_height = max(args.cam_height, map_radius * 1.6, 20.0)
+    half_extent = (map_max[:2] - map_min[:2]) / 2.0 + 50.0  # +50m pad
     vis.poll_events()
     vis.update_renderer()
     cam_params = vis.get_view_control().convert_to_pinhole_camera_parameters()
+    fx, fy = cam_params.intrinsic.intrinsic_matrix[0, 0], cam_params.intrinsic.intrinsic_matrix[1, 1]
+    w, h = cam_params.intrinsic.width, cam_params.intrinsic.height
+    margin = 1.15
+    height_for_x = half_extent[0] * margin * fx / (w / 2.0)
+    height_for_y = half_extent[1] * margin * fy / (h / 2.0)
+    init_height = max(args.cam_height, height_for_x, height_for_y, 20.0)
     cam_params.extrinsic = look_at_extrinsic(
         map_center + np.array([0., 0., init_height]), map_center,
         up_world=np.array([0., 1., 0.]))
