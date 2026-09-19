@@ -68,9 +68,15 @@ line 2823 [WARN][1789756621.612037486] No Effective Points!                <- t+
 
 ---
 
+## v6 — 修正嘗試 3:調大 IMU noise(acc_cov/gyr_cov 0.1→0.4,b_acc_cov/b_gyr_cov 0.0001→0.001),cube_side_length 改回 1000.0
+
+假設:LIO-SAM(另一套緊耦合 IMU 的系統)在同一份資料上也不穩定,懷疑是 IMU noise 參數沒有針對這顆真實感測器校正,讓濾波器太相信 IMU。檢查原始碼確認 `lasermap_fov_segment`(cube 搬移邏輯)其實是標準 FAST-LIO2 演算法,不是移植版的 bug——先前調大 cube_side_length 反而讓單次搬移距離(mov_dist)更誇張,方向錯了,cube_side_length 改回業界常用的 1000.0。
+
+結果:**更快壞掉**——約 **20 秒**就開始永久性 "No Effective Points!",比 v3(272s)、v4(108s)、v5(37s)都早,呈現明確的單調惡化趨勢(272→108→37→20)。這個結果**反證**了 IMU noise 假設,已改回原始參數值。
+
 ## 結論
 
-三次修正嘗試(調大 filter_size_map、調大 cube_side_length)都**沒有解決**根本問題,失敗發生的時間點也沒有隨著參數調整呈現符合假設的規律變化(反而越調越早壞)。這暗示問題可能不在這兩個參數本身,而是這個第三方 ROS2 port(`MIT-SPARK/spark-fast-lio`)在長時間、大範圍戶外資料上的 ikd-tree 地圖維護或多執行緒同步邏輯裡有更深層的 bug,超出本次任務的除錯範圍。
+四次修正嘗試(調大 filter_size_map、調大 cube_side_length、調大 IMU noise)都**沒有解決**根本問題。特別值得注意的是後三次呈現明確的單調惡化趨勢(272s → 108s → 37s → 20s 就開始永久失敗),說明這幾個參數調整方向都是**錯的**,而不是「調得不夠」。已確認 cube 搬移邏輯是標準 FAST-LIO2 演算法(非移植版 bug)。這暗示真正的根因可能在這個第三方 ROS2 port(`MIT-SPARK/spark-fast-lio`)的 ikd-tree 地圖維護或多執行緒同步邏輯裡有更深層的 bug,需要對照原始 FAST-LIO2(ROS1)或其他 ROS2 port 逐行比對差異才有機會抓到,超出本次任務的除錯範圍,已放棄。
 
 完整原始 log 檔案:
 - `outputs/logs/fastlio_full_run_v3.log`

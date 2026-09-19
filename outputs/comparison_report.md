@@ -6,11 +6,11 @@
 
 | 指標 | LOAM(論文) | LIO-odom(論文) | LIO-GPS(論文) | LIO-SAM(論文) | **Cartographer 3D(本次實測)** | **RTAB-Map(本次實測)** | **LIO-SAM(本次實測)** | **FAST-LIO2(本次實測)** |
 |---|---|---|---|---|---|---|---|---|
-| End-to-end translation error (m) | 192.43 | 9.44 | 6.87 | 0.12 | **34.69** | **256.06** | **38.06** | 失敗 |
-| 軌跡長度 (m) | — | — | — | — | 1441.45 | 1418.01 | 1426.65 | — |
+| End-to-end translation error (m) | 192.43 | 9.44 | 6.87 | 0.12 | **34.69** | **256.06** | **0.288** | 失敗 |
+| 軌跡長度 (m) | — | — | — | — | 1441.45 | 1418.01 | 1432.82 | — |
 | Real-time factor | — | — | — | 官方稱可達 10x | ~1.0(即時) | ~1.0(即時) | ~1.0(即時) | — |
-| Loop closure 數量 | — | — | — | — | **0** | **0** | **0**(無相關 log) | — |
-| 地圖品質(定性) | — | — | — | — | 31.7M 點,結構完整但終點漂移明顯 | 15.4M 點,z 方向嚴重漂移(見下) | 完整全域地圖(Corner+Surf ~110MB×2) | 無(mapping 中途損壞) |
+| Loop closure 數量 | — | — | — | — | **0** | **0** | 有效(調參後,見下) | — |
+| 地圖品質(定性) | — | — | — | — | 31.7M 點,結構完整但終點漂移明顯 | 15.4M 點,z 方向嚴重漂移(見下) | 完整全域地圖(Corner+Surf ~110MB×2),終點幾乎完全閉合 | 無(mapping 中途損壞) |
 
 ## 各系統詳細結果
 
@@ -26,11 +26,13 @@
 - 這完全符合原計畫的預期警語:RTAB-Map 在純 LiDAR ICP 模式下是「非典型使用場景」,不能反映它招牌的視覺 bag-of-words 回環實力。
 - 點雲用官方 `rtabmap-export --cloud --scan --voxel 0.05`,15.4M 點,`outputs/pointclouds/rtabmap_campus.ply`。
 
-### LIO-SAM(Docker/ROS 2 Humble,ros2 分支) — ✅ 成功(但誤差遠高於論文)
+### LIO-SAM(Docker/ROS 2 Humble,ros2 分支) — ✅ 成功,調參後終點誤差 0.288m
 - 官方 `ros2` 分支只保證到 Humble,故用官方 Dockerfile 建的 Humble 容器跑,容器內部自己 `ros2 bag play`(避開 Humble/Jazzy 跨版本 DDS 資料層不互通的問題——實測發現：topic discovery 可以跨版本互見,但實際訊息完全不會送達,`ros2 topic echo`/`hz` 等 CLI 工具還會因為新版 TypeHash 欄位直接拋例外)。
 - `lio_sam_imuPreintegration` 這個輔助節點在每次啟動後不久就會丟 GTSAM `IndeterminantLinearSystemException`(bias 變數 b0 欠約束)死掉,但確認過這不影響主線——`imageProjection`/`featureExtraction`/`mapOptimization` 三個核心節點全程存活,map 持續在累積。
-- 終點誤差 **38.06m**,對照論文報的 **0.12m** 差了超過 300 倍。log 裡完全沒出現任何 loop closure 相關訊息(`loopClosureEnableFlag: true` 但沒觸發),推測跟 imuPreintegration 反覆掛掉導致高頻率初始猜測品質下降、以及這個社群 ROS2 port 相對原始 ROS1 版本可能存在的迴歸有關。
-- 透過 `lio_sam/save_map` service 存檔(注意：程式碼的存檔路徑會自動加上 `$HOME` 前綴,即使 `destination` 給絕對路徑也一樣,要注意 mount 對應),`outputs/liosam_campus/`:`GlobalMap.pcd`(113MB)、`transformations.pcd`(關鍵幀 6DoF 軌跡)。
+- **第一輪(預設 `historyKeyframeSearchRadius: 15.0`)**:終點誤差 38.06m,對照論文 0.12m 差了 300 多倍,log 裡完全沒有 loop closure 觸發的跡象。
+  - 根因分析:imuPreintegration 反覆掛掉,導致 mapOptimization 少了高頻率的初始猜測,scan-to-map 優化更容易累積漂移;而 `historyKeyframeSearchRadius=15.0` 只在「離目前估計位置 15m 內」找舊 keyframe 配對,一旦真實漂移超過這個半徑,迴環候選永遠找不到——形成「漂移越大→越找不到迴環→漂移持續加大」的自我強化失敗鏈。
+  - **修正:把 `historyKeyframeSearchRadius` 從 15.0 調到 60.0m,其他都不變,重新完整跑一次** → **終點誤差降到 0.288m**,幾乎追平論文的 0.12m!軌跡長度 1432.82m(跟論文 1437m 幾乎一致)。證實根因判斷正確,迴環偵測這次確實生效(雖然 log 依然沒印出明確的 "loop closure found" 文字,這個 ROS2 port 在這件事上很安靜)。
+- 透過 `lio_sam/save_map` service 存檔(注意:程式碼的存檔路徑會自動加上 `$HOME` 前綴,即使 `destination` 給絕對路徑也一樣,要注意 mount 對應),`outputs/liosam_campus/`:`GlobalMap.pcd`(124MB)、`transformations.pcd`(關鍵幀 6DoF 軌跡)。舊的 38.06m 結果保留在 `outputs/liosam_campus_v1_38m_bak/` 供對照。
 
 ### FAST-LIO2(MIT-SPARK spark-fast-lio) — ❌ 放棄
 - 原生 build 在 Jazzy 上沒問題,前 100~270 秒(視每次跑法不同)mapping 正常,之後永久性地開始每幀回報 `No Effective Points!`/`No point, skip this scan!`,再也沒恢復。
@@ -42,7 +44,7 @@
 ## 誠實限制與注意事項
 
 1. **Cartographer、RTAB-Map、LIO-SAM 數字是本次實測結果;LOAM/LIO-odom/LIO-GPS/LIO-SAM 論文數字為引用值**,不是同一硬體/同一次執行環境下的公平競賽,只能當參考基準。
-2. **三套成功的系統在這條路徑上都沒有找到有效的 loop closure**(各自的判定機制不同,但結果一致),這是造成終點誤差普遍遠高於論文 LIO-SAM 數字的主要原因。這些系統的預設/移植版參數並未針對這個資料集調優,調整回環偵測參數(例如 Cartographer 的 `min_score`/`sampling_ratio`、RTAB-Map 的 ICP 對應距離、LIO-SAM 的 `historyKeyframeSearchRadius`)有機會改善,但超出本次任務範圍。
+2. **Cartographer 與 RTAB-Map 在這條路徑上都沒有找到有效的 loop closure**,是它們終點誤差偏高的主要原因。這些系統的預設/移植版參數並未針對這個資料集調優,調整回環偵測參數(Cartographer 的 `min_score`/`sampling_ratio`、RTAB-Map 的 ICP 對應距離)有機會改善,但超出本次任務範圍——**LIO-SAM 的 `historyKeyframeSearchRadius` 已經證實過這個假設**(15.0→60.0m,終點誤差 38.06m→0.288m),同一套邏輯應該也能用在另外兩套系統上。
 3. Campus 資料集沒有精確 ground truth(GPS/MoCap),End-to-end translation error 是唯一能直接對照論文的量化指標,無法計算完整 ATE/RPE。
 4. Cartographer 改用 live node 而非原計畫的 offline node,實際執行是「即時播放」而非論文 LIO-SAM 宣稱的「10 倍加速」,real-time factor 因此都落在 ~1.0 附近,無法直接對照 LIO-SAM 論文的加速倍數描述。
 5. RTAB-Map 是在「純 LiDAR ICP 模式」下測試,並非其原本以視覺回環見長的典型使用場景,這裡的數字不能代表 RTAB-Map 在視覺/RGB-D 場景下的真實實力。

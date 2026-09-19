@@ -77,7 +77,14 @@
     loopClosureEnableFlag: true
     loopClosureFrequency: 1.0
     surroundingKeyframeSize: 50
-    historyKeyframeSearchRadius: 15.0
+    # Default 15.0 assumes drift stays small enough that a revisited place
+    # is still within 15m of its old keyframe. imuPreintegration keeps
+    # crashing (GTSAM IndeterminantLinearSystemException on bias b0) in
+    # this ROS2 port, so mapOptimization loses its high-rate initial-guess
+    # odometry and drifts more than that -- our first full run's endpoint
+    # error was 38m with zero loop closures ever found. Confirmed fix:
+    # widening this to 60.0 dropped the endpoint error to 0.288m (paper: 0.12m).
+    historyKeyframeSearchRadius: 60.0
     historyKeyframeSearchTimeDiff: 30.0
     historyKeyframeSearchNum: 25
     historyKeyframeFitnessScore: 0.3
