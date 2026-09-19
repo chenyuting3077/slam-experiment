@@ -14,11 +14,9 @@ from pathlib import Path
 
 import numpy as np
 import open3d as o3d
-from scipy.ndimage import median_filter
 
 from incremental_playback_viewer import (
     load_tum, height_rainbow, cylinder_segment, look_at_extrinsic,
-    interpolate_pose, load_gps, gps_to_local_xy, align_rigid_2d, DEFAULT_BAG,
 )
 
 
@@ -48,10 +46,6 @@ def main():
                           'instead of its real height, so it never ends up underneath/behind '
                           'point-cloud structure from the top-down view. Only affects the '
                           'tube\'s drawn Z, not the real pose.')
-    ap.add_argument('--bag', default=DEFAULT_BAG)
-    ap.add_argument('--no-gps', action='store_true',
-                     help='skip overlaying the /gps/fix ground-truth track')
-    ap.add_argument('--gps-radius', type=float, default=1.5)
     args = ap.parse_args()
 
     label = Path(args.trajectory).stem
@@ -103,84 +97,20 @@ def main():
                 traj_mesh += seg
             last = p_flat
 
-    gps_mesh = None
-    gps_xy_aligned = None
-    if not args.no_gps:
-        print(f"[{label}] Loading /gps/fix from {args.bag} for ground-truth overlay...")
-        gps_times, lats, lons, alts = load_gps(args.bag)
-        if len(gps_times) > 3:
-            east, north = gps_to_local_xy(lats, lons)
-            gps_local = np.stack([east, north], axis=1)
-            slam_xy_at_gps, gps_valid = [], []
-            for i, t in enumerate(gps_times):
-                pose = interpolate_pose(times, trans, quats, t)
-                if pose is not None:
-                    slam_xy_at_gps.append(pose[:2, 3])
-                    gps_valid.append(i)
-            if len(gps_valid) >= 3:
-                p = gps_local[gps_valid]
-                q = np.array(slam_xy_at_gps)
-                r, t_off = align_rigid_2d(p, q)
-                gps_xy_aligned = (r @ gps_local.T).T + t_off
-                print(f"[{label}] Aligned {len(gps_valid)}/{len(gps_times)} GPS fixes to "
-                      f"this system's frame (rigid 2D fit).")
-                # Raw single-antenna GPS near buildings throws occasional huge
-                # multipath spikes (tens of meters, one fix at a time) -- a
-                # short median filter kills those without smearing the real
-                # loop shape, since a spike is a single outlier sample, not a
-                # sustained trend. Fit alignment above used the raw fixes;
-                # this filtering is display-only.
-                gps_xy_smooth = np.stack([
-                    median_filter(gps_xy_aligned[:, 0], size=9, mode='nearest'),
-                    median_filter(gps_xy_aligned[:, 1], size=9, mode='nearest'),
-                ], axis=1)
-                # Break the drawn line (instead of bridging with a straight
-                # segment) wherever consecutive fixes still jump further than
-                # plausible walking/vehicle speed allows -- leftover multipath
-                # excursions the median filter didn't fully absorb, otherwise
-                # each one draws a long, misleading straight streak.
-                max_jump = 8.0
-                gps_mesh = o3d.geometry.TriangleMesh()
-                last_g = None
-                for xy in gps_xy_smooth:
-                    g_flat = np.array([xy[0], xy[1], traj_lift_z])
-                    if last_g is None:
-                        last_g = g_flat
-                        continue
-                    if np.linalg.norm(g_flat - last_g) > max_jump:
-                        last_g = g_flat
-                        continue
-                    if np.linalg.norm(g_flat - last_g) >= args.traj_seg_dist:
-                        seg = cylinder_segment(last_g, g_flat, args.gps_radius)
-                        if seg is not None:
-                            seg.paint_uniform_color([1.0, 1.0, 0.0])  # yellow, distinct from white
-                            gps_mesh += seg
-                        last_g = g_flat
-            else:
-                print(f"[{label}] Not enough overlapping GPS/trajectory time range -- skipping.")
-        else:
-            print(f"[{label}] No usable /gps/fix messages -- skipping.")
-
     vis = o3d.visualization.Visualizer()
     vis.create_window(window_name=f"Map: {label}", width=args.win_width,
                        height=args.win_height, visible=True)
     vis.add_geometry(render_cloud)
     vis.add_geometry(traj_mesh)
-    if gps_mesh is not None:
-        vis.add_geometry(gps_mesh)
     ro = vis.get_render_option()
     ro.point_size = args.point_size
     ro.background_color = np.array([0.0, 0.0, 0.0])
 
-    # Frame on the union of the trajectory, the point cloud, AND the GPS
-    # overlay's own extent -- buildings/trees can stick out past the
-    # trajectory's bounding box, and cropping them was exactly the earlier
-    # "PNG isn't complete" complaint.
+    # Frame on the union of the trajectory AND the point cloud's own extent --
+    # buildings/trees can stick out past the trajectory's bounding box, and
+    # cropping them was exactly the earlier "PNG isn't complete" complaint.
     xy_min = np.minimum(trans[:, :2].min(axis=0), pts[:, :2].min(axis=0)) if len(pts) else trans[:, :2].min(axis=0)
     xy_max = np.maximum(trans[:, :2].max(axis=0), pts[:, :2].max(axis=0)) if len(pts) else trans[:, :2].max(axis=0)
-    if gps_xy_aligned is not None:
-        xy_min = np.minimum(xy_min, gps_xy_aligned.min(axis=0))
-        xy_max = np.maximum(xy_max, gps_xy_aligned.max(axis=0))
     map_center_xy = (xy_min + xy_max) / 2.0
     map_center = np.array([map_center_xy[0], map_center_xy[1], float(trans[:, 2].mean())])
     half_extent = (xy_max - xy_min) / 2.0

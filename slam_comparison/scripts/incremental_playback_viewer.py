@@ -128,48 +128,6 @@ def load_scans(bag_path, point_stride):
     return scans
 
 
-def load_gps(bag_path, topic='/gps/fix'):
-    """Returns times, lats, lons, alts for every NavSatFix on `topic` --
-    used as an independent (non-LiDAR) ground-truth reference, since the
-    Campus bag actually does carry raw GPS even though the SLAM systems
-    themselves don't use it."""
-    times, lats, lons, alts = [], [], [], []
-    with AnyReader([Path(bag_path)]) as reader:
-        conns = [c for c in reader.connections if c.topic == topic]
-        for conn, timestamp, rawdata in reader.messages(connections=conns):
-            msg = reader.deserialize(rawdata, conn.msgtype)
-            times.append(timestamp / 1e9)
-            lats.append(msg.latitude)
-            lons.append(msg.longitude)
-            alts.append(msg.altitude)
-    return np.array(times), np.array(lats), np.array(lons), np.array(alts)
-
-
-def gps_to_local_xy(lats, lons, lat0=None, lon0=None):
-    """Equirectangular approximation -- plenty accurate over a ~1km loop."""
-    if lat0 is None:
-        lat0, lon0 = lats[0], lons[0]
-    earth_r = 6378137.0
-    east = np.radians(lons - lon0) * earth_r * np.cos(np.radians(lat0))
-    north = np.radians(lats - lat0) * earth_r
-    return east, north
-
-
-def align_rigid_2d(p, q):
-    """Best-fit rotation+translation (no scale) mapping 2D points p onto q,
-    via Procrustes/Kabsch on their centroids -- used to bring GPS (in its
-    own ENU frame) into a SLAM system's own, arbitrarily-rotated frame."""
-    pc, qc = p - p.mean(axis=0), q - q.mean(axis=0)
-    h = pc.T @ qc
-    u, _, vt = np.linalg.svd(h)
-    r = vt.T @ u.T
-    if np.linalg.det(r) < 0:
-        u[:, -1] *= -1
-        r = vt.T @ u.T
-    t = q.mean(axis=0) - r @ p.mean(axis=0)
-    return r, t
-
-
 def look_at_extrinsic(eye, target, up_world=np.array([0., 0., 1.])):
     """World-to-camera 4x4 (OpenCV/Open3D convention: +Z forward into the
     scene, +X right, +Y down)."""

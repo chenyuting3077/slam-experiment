@@ -89,7 +89,7 @@ Campus 資料集的路線本質上是一圈近乎平面的校園步道,理論上
 
 1. **Cartographer、RTAB-Map、LIO-SAM、FAST-LIO2 數字都是本次實測結果;LOAM/LIO-odom/LIO-GPS/LIO-SAM 論文數字為引用值**,不是同一硬體/同一次執行環境下的公平競賽,只能當參考基準。
 2. **三套系統的迴環搜尋半徑類參數預設值都偏小**(Cartographer `max_constraint_distance`、RTAB-Map `RGBD/LocalRadius`、LIO-SAM `historyKeyframeSearchRadius` 全部預設 10~15m),調寬之後三套系統呈現三種不同結果:LIO-SAM 幾乎完全修正(38.06m→0.288m)、Cartographer 找到迴環但改善有限(34.69m→31.67m)、RTAB-Map 完全沒找到迴環(256.06m→163.67m 的改善也不是迴環生效)。這證明「找不到迴環候選」背後有至少三種不同層次的原因,不是單一參數能一次解決的,詳見下方分析。
-3. Campus 資料集沒有 MoCap/RTK 等級的精確 ground truth,End-to-end translation error 仍是唯一能直接對照論文的量化指標,無法計算完整 ATE/RPE。但 bag 裡確實有一路 `/gps/fix`(單天線、非差分,3879 筆定位),四張 `outputs/*_map.png` 都疊上了這路 GPS 軌跡(黃色,對每套系統各自做一次 2D 剛體對齊、9-sample 中值濾波去除多路徑尖峰、並丟棄殘餘的異常跳點)當作粗略的定性參照。結果跟終點誤差的排名完全一致:FAST-LIO2 幾乎與 GPS 完全疊合,Cartographer/LIO-SAM 貼合良好,RTAB-Map 偏移最明顯——這只是量級對照,GPS 本身在建築物旁精度只有數公尺到十幾公尺,不能當成公尺級的定量 ground truth。
+3. Campus 資料集沒有精確 ground truth(GPS/MoCap),End-to-end translation error 是唯一能直接對照論文的量化指標,無法計算完整 ATE/RPE。
 4. Cartographer 改用 live node 而非原計畫的 offline node,實際執行是「即時播放」而非論文 LIO-SAM 宣稱的「10 倍加速」,real-time factor 因此都落在 ~1.0 附近,無法直接對照 LIO-SAM 論文的加速倍數描述。
 5. RTAB-Map 是在「純 LiDAR ICP 模式」下測試,並非其原本以視覺回環見長的典型使用場景,這裡的數字不能代表 RTAB-Map 在視覺/RGB-D 場景下的真實實力。
 6. FAST-LIO2 的 ROS2 社群移植版(spark-fast-lio)在這台環境下有無法解決的問題(見 `outputs/fastlio_failure_logs.md`),已改用官方 ROS1 原始實作在 Docker 容器裡跑出成功結果——這證明失敗是**這個特定 port 的問題**,不是 FAST-LIO2 演算法本身或我們的資料集/參數設定的問題。
