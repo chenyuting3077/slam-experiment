@@ -1,6 +1,7 @@
 data/
 outputs/*
 !outputs/comparison_report.md
+!outputs/fastlio_failure_logs.md
 build/
 install/
 log/
