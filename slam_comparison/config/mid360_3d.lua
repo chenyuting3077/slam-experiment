@@ -44,14 +44,17 @@ TRAJECTORY_BUILDER_3D.num_accumulated_range_data = 1
 TRAJECTORY_BUILDER_3D.min_range = 0.3    -- Mid360 blind zone is ~0.1-0.2m
 TRAJECTORY_BUILDER_3D.max_range = 60.    -- Mid360 spec range ~40-70m depending on reflectivity
 
--- NOTE: on this dataset's Mid360 IMU, the pose extrapolator's local
--- odom->livox_frame estimate reproducibly diverges (quadratically growing
--- to tens of millions of meters within ~1 minute of real-time playback),
--- while the internal pose graph/submap logging shows no errors -- a
--- residual gravity-alignment/extrapolation issue specific to this IMU's
--- data, not fixed by tuning imu_gravity_time_constant (tried 1.0, which
--- instead stalled submap insertion entirely). Left as a known, documented
--- failure for this dataset rather than the shipped default being wrong.
+-- The pose extrapolator's local odom->livox_frame estimate reproducibly
+-- diverges (quadratically growing to tens of millions of meters within
+-- ~1 minute of real-time playback). Tried imu_gravity_time_constant at
+-- 1s (submap insertion stalled entirely -- worse), the 10s default
+-- (diverges), and 30s (diverges even FASTER, ~-62M m by 95s in, worse
+-- than default) -- tuning this parameter in either direction doesn't
+-- fix it, which rules it out as the lever and points to something more
+-- fundamental (most likely the pose extrapolator's IMU-integration-based
+-- initial guess failing to track this "hard" sequence's aggressive
+-- motion) rather than a simple gravity-convergence-speed issue. Left at
+-- the shipped default; documented as an unresolved limitation.
 
 MAP_BUILDER.use_trajectory_builder_3d = true
 MAP_BUILDER.num_background_threads = 7
