@@ -197,6 +197,7 @@ def main():
                      help='re-voxel-merge the accumulated cloud every N scans (1=every scan, '
                           'so revisited areas merge immediately instead of double-plotting)')
     ap.add_argument('--point-stride', type=int, default=4, help='subsample points within each scan')
+    ap.add_argument('--point-size', type=float, default=1.0, help='rendered point size on screen')
     ap.add_argument('--speed', type=float, default=20.0, help='scans per second during playback (~2x the sensor\'s native 10Hz)')
     ap.add_argument('--no-chase-cam', action='store_true', help='use a fixed bird\'s-eye view instead')
     ap.add_argument('--chase-distance', type=float, default=10.0, help='camera distance behind current point (m)')
@@ -253,7 +254,7 @@ def main():
     vis.add_geometry(current_marker)
 
     render_opt = vis.get_render_option()
-    render_opt.point_size = 1.5
+    render_opt.point_size = args.point_size
     render_opt.background_color = np.array([0.0, 0.0, 0.0])
     marker_center = np.zeros(3)
 
