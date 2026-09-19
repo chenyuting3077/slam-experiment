@@ -198,7 +198,7 @@ def main():
                           'so revisited areas merge immediately instead of double-plotting)')
     ap.add_argument('--point-stride', type=int, default=4, help='subsample points within each scan')
     ap.add_argument('--point-size', type=float, default=1.0, help='rendered point size on screen')
-    ap.add_argument('--speed', type=float, default=20.0, help='scans per second during playback (~2x the sensor\'s native 10Hz)')
+    ap.add_argument('--speed', type=float, default=40.0, help='scans per second during playback (~4x the sensor\'s native 10Hz)')
     ap.add_argument('--no-chase-cam', action='store_true', help='use a fixed bird\'s-eye view instead')
     ap.add_argument('--chase-distance', type=float, default=10.0, help='camera distance behind current point (m)')
     ap.add_argument('--chase-height', type=float, default=14.0, help='camera height above current point (m)')
