@@ -165,6 +165,28 @@ def heading_from_recent(traj_points, window=5):
     return delta / n
 
 
+def height_rainbow(z, zmin, zmax):
+    """RViz-style AxisColor rainbow: hue sweeps red -> yellow -> green ->
+    cyan -> blue as height increases (matches the LIO-SAM README demo gif's
+    look), instead of a plain two-color blend."""
+    span = max(zmax - zmin, 1e-6)
+    t = np.clip((z - zmin) / span, 0.0, 1.0)
+    hue = t * (240.0 / 360.0)  # low=red(0) -> yellow -> green -> blue(high)
+    h6 = hue * 6.0
+    i = np.floor(h6).astype(np.int32) % 6
+    f = h6 - np.floor(h6)
+    colors = np.zeros((len(z), 3))
+    for k, (r, g, b) in enumerate([
+        (1, f, 0), (1 - f, 1, 0), (0, 1, f),
+        (0, 1 - f, 1), (f, 0, 1), (1, 0, 1 - f),
+    ]):
+        mask = i == k
+        colors[mask, 0] = r[mask] if hasattr(r, '__len__') else r
+        colors[mask, 1] = g[mask] if hasattr(g, '__len__') else g
+        colors[mask, 2] = b[mask] if hasattr(b, '__len__') else b
+    return colors
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('trajectory')
@@ -172,10 +194,20 @@ def main():
     ap.add_argument('--stride', type=int, default=1, help='use every Nth scan')
     ap.add_argument('--voxel', type=float, default=0.15, help='accumulated-cloud voxel size (0=off)')
     ap.add_argument('--point-stride', type=int, default=4, help='subsample points within each scan')
-    ap.add_argument('--speed', type=float, default=8.0, help='scans per second during playback')
+    ap.add_argument('--speed', type=float, default=20.0, help='scans per second during playback (~2x the sensor\'s native 10Hz)')
     ap.add_argument('--no-chase-cam', action='store_true', help='use a fixed bird\'s-eye view instead')
-    ap.add_argument('--chase-distance', type=float, default=15.0, help='camera distance behind current point (m)')
-    ap.add_argument('--chase-height', type=float, default=8.0, help='camera height above current point (m)')
+    ap.add_argument('--chase-distance', type=float, default=10.0, help='camera distance behind current point (m)')
+    ap.add_argument('--chase-height', type=float, default=14.0, help='camera height above current point (m)')
+    ap.add_argument('--win-width', type=int, default=960)
+    ap.add_argument('--win-height', type=int, default=720)
+    ap.add_argument('--win-x', type=int, default=50)
+    ap.add_argument('--win-y', type=int, default=50)
+    ap.add_argument('--z-min', type=float, default=-3.0,
+                     help='fixed height mapped to red (low end of the rainbow); '
+                          'kept fixed (not auto-rescaled) so color = same absolute '
+                          'height across time and across the four side-by-side windows')
+    ap.add_argument('--z-max', type=float, default=8.0,
+                     help='fixed height mapped to blue (high end of the rainbow)')
     args = ap.parse_args()
 
     label = Path(args.trajectory).stem
@@ -200,7 +232,9 @@ def main():
         return False
 
     vis = o3d.visualization.VisualizerWithKeyCallback()
-    vis.create_window(window_name=f"Incremental playback: {label}", width=1280, height=800)
+    vis.create_window(window_name=f"Incremental playback: {label}",
+                       width=args.win_width, height=args.win_height,
+                       left=args.win_x, top=args.win_y)
     vis.register_key_callback(32, toggle_pause)   # space
     vis.register_key_callback(262, step_once)     # right arrow
     vis.register_key_callback(81, quit_now)       # Q
@@ -208,20 +242,24 @@ def main():
 
     accumulated = o3d.geometry.PointCloud()
     traj_line = o3d.geometry.LineSet()
+    current_marker = o3d.geometry.TriangleMesh.create_sphere(radius=0.6)
+    current_marker.paint_uniform_color([1.0, 0.15, 0.15])
     traj_points = []
     vis.add_geometry(accumulated)
     vis.add_geometry(traj_line)
+    vis.add_geometry(current_marker)
 
     render_opt = vis.get_render_option()
     render_opt.point_size = 1.5
-    render_opt.background_color = np.array([0.05, 0.05, 0.05])
+    render_opt.background_color = np.array([0.0, 0.0, 0.0])
+    marker_center = np.zeros(3)
 
     accumulated_xyz = []
     first = True
     cam_params = None
 
     def advance():
-        nonlocal accumulated_xyz, first
+        nonlocal accumulated_xyz, first, marker_center
         idx = state['idx']
         if idx >= len(scans):
             return False
@@ -238,11 +276,8 @@ def main():
         merged = np.vstack(accumulated_xyz)
         accumulated.points = o3d.utility.Vector3dVector(merged)
         z = merged[:, 2]
-        zmin, zmax = z.min(), z.max() + 1e-6
-        colors = np.zeros((len(merged), 3))
-        colors[:, 0] = (z - zmin) / (zmax - zmin)
-        colors[:, 2] = 1.0 - colors[:, 0]
-        accumulated.colors = o3d.utility.Vector3dVector(colors)
+        accumulated.colors = o3d.utility.Vector3dVector(
+            height_rainbow(z, args.z_min, args.z_max))
         if args.voxel > 0 and len(accumulated_xyz) % 20 == 0:
             down = accumulated.voxel_down_sample(args.voxel)
             accumulated.points = down.points
@@ -254,10 +289,14 @@ def main():
             lines = [[i, i + 1] for i in range(len(traj_points) - 1)]
             traj_line.lines = o3d.utility.Vector2iVector(lines)
             traj_line.colors = o3d.utility.Vector3dVector(
-                [[1, 1, 0] for _ in lines])
+                [[0.4, 1.0, 1.0] for _ in lines])  # cyan, like the reference gif
+
+        current_marker.translate(pose[:3, 3] - marker_center)
+        marker_center = pose[:3, 3].copy()
 
         vis.update_geometry(accumulated)
         vis.update_geometry(traj_line)
+        vis.update_geometry(current_marker)
         if first:
             vis.reset_view_point(True)
             first = False
