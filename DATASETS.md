@@ -1,6 +1,6 @@
 # 資料集特性說明
 
-本專案用兩種感測器(VLP-16、Livox Mid360)、三個獨立資料集來源(LIO-SAM 官方、Zenodo、TIERS)、共 10 段序列測試同一組四套 SLAM 系統(Cartographer 3D、RTAB-Map、LIO-SAM、FAST-LIO2),目的是看同一套系統在不同 LiDAR 掃描模式、不同軌跡結構、不同資料集來源下的表現差異。
+本專案用兩種感測器(VLP-16、Livox Mid360)、四個獨立資料集來源(LIO-SAM 官方、Zenodo、TIERS、LegKilo)、共 11 段序列測試同一組四套 SLAM 系統(Cartographer 3D、RTAB-Map、LIO-SAM、FAST-LIO2),目的是看同一套系統在不同 LiDAR 掃描模式、不同軌跡結構、不同資料集來源下的表現差異。
 
 ## 1. Campus(LIO-SAM 官方資料集)
 
@@ -198,3 +198,33 @@ RTAB-Map 的 `icp_odometry` 同樣再次失去追蹤(ICP 旋轉量 0.64~0.93 rad
 | FAST-LIO2 | ✅ 成功,完整跑完 546 個姿態,無迴環偵測 | **0.567m** |
 
 這是本專案目前為止最大的系統間反差:FAST-LIO2(0.567m)、RTAB-Map(0.760m)都遠遠贏過 LIO-SAM(57.8m)。渲染出來的地圖顯示 LIO-SAM 的軌跡跟自己重建的點雲對得上、沒有明顯的發散痕跡——問題不是「跑壞了」或「失去追蹤」,是這套官方 ROS2 port 的因子圖優化在這段近 10 分鐘、非閉環的長距離戶外路徑上,累積了遠比另外兩套系統更嚴重的絕對定位漂移。跟 Campus 資料集上 LIO-SAM 是全場最準(0.288m)形成強烈對比,再次印證沒有一套系統能在所有資料集上都保持優勢。
+
+## 8. LegKilo corridor.bag(Unitree Go1 四足機器人,VLP-16,帶真實里程計 + 真實 ground truth)
+
+前 10 段資料全部是人手持/背包式感測器架。這是第一份**真正的機器人平台**資料集——[LegKilo 資料集](https://github.com/ouguangjun/Leg-KILO)的 `corridor.bag`,錄製於 Unitree Go1 四足機器人,而且**真的有里程計**可以接。也是第一次讓新加入的第 5 套系統 `FAST_LIO_SAM` 跟其他四套同場測試。
+
+| 項目 | 內容 |
+|---|---|
+| 平台 | Unitree Go1 四足機器人(非手持,腿式) |
+| LiDAR | Velodyne VLP-16,`/points_raw`,欄位跟既有慣例完全一致(x,y,z,intensity,ring,time,point_step=22) |
+| IMU | 機身內建 9 軸 IMU,`/imu_raw`(500Hz,原始未旋轉) |
+| 里程計 | `/state_SDK`(`nav_msgs/Odometry`,腿部運動學 + IMU 融合的官方狀態估計輸出,真實硬體感測,不是事後算的) |
+| Ground truth | 動作捕捉系統,`corridor_tum.txt`,已經是可以直接用的 TUM 格式 |
+| 幀數 / 時長 | 4,421 幀點雲、445.9 秒 |
+| 外部參數 | 官方 `legkilo_go1_velodyne.yaml`:LiDAR 相對 IMU 的偏移 `extrinsic_T=[0,0,0.20]`,旋轉是單位矩陣(兩者軸向對齊,只有 0.2m 的 Z 偏移) |
+
+### 這次測試的動機:驗證「提供真實里程計」是否能修好 Cartographer 的發散 bug
+
+找了使用者自己公司 AMR 專案(`compal_amr_allen/amr_slam`)的 Cartographer 設定檔(`spot_3d.lua`、`go2_offline_mapping.lua`)對照,發現他們**沒有關閉 IMU**,而是額外提供**真實輪式/腿式里程計**(`use_odometry = true`,topic 名稱是 `odom`,不是 `odometry`——這點在原始碼裡的 `ordered_multi_queue.cc` 日誌才確認清楚,一開始 remap 方向猜錯,整個 pipeline 卡死,跟完全不接 IMU 一樣的靜默失敗模式)。
+
+先追出原始碼機制(`pose_extrapolator.cc::AddOdometryData`):odometry 只提供一個線速度估計,輔助**位置**推算;**旋轉**推算(`ExtrapolateRotation`)仍然完全依賴同一個有 bug 的 `ImuTracker`。
+
+實測結果完全吻合這個機制分析:接了 `/state_SDK` 之後,Cartographer **沒有崩潰**、跑完全程 445.9 秒、插入 27 個 submap(表示真的在處理資料,不是像完全不接 IMU 那樣整個卡死),但 `/tf` 顯示 `odom→imu_link` 最終飄到約 (8653, -6094, -6157) 公尺——比沒有 odometry 時的「數千萬公尺」小了約 1000 倍,但仍然明顯是錯的。**結論:提供真實里程計讓情況顯著變好,但沒有根治**,跟原始碼分析完全一致——這是嘗試過的三個方向裡(調參數、完全不接 IMU、接真實 odometry)最接近「有效」的一個,但還不是真正的修復。詳見 [CARTOGRAPHER_FAILURE.md](../CARTOGRAPHER_FAILURE.md)。
+
+### 意外發現:FAST-LIO2 系列(官方 + FAST_LIO_SAM)在這段資料上嚴重發散
+
+跟 9 段其他資料集裡官方 FAST-LIO2 幾乎穩如泰山的表現完全相反,這次跑出 **272.193m** 的 ATE RMSE(RTAB-Map/LIO-SAM 都在 2.3m 左右)。檢查軌跡本身的位移/速度分佈,發現不是單一次跳躍,是**持續、累積的漂移**——軌跡總長被推算成 2294~3019m,遠超真實的 288.5m。原因指向一個經典的 SLAM 退化場景:**這是一段又長又直、兩側幾何特徵變化很少的走廊**(`corridor` 這個資料集名字本身就是設計來考驗這個問題的),沿著走廊方向缺乏足夠的幾何約束,純里程計、沒有迴環偵測的緊耦合 ESKF 系統完全沒有機制糾正這種退化累積的漂移。
+
+`FAST_LIO_SAM`(用同一套前端)踩到的是同一個退化問題,但結果更誇張:**61062.212m** 的 ATE——GTSAM 迴環後端把已經錯誤的前端估計進一步放大,而不是糾正它,說明後端的迴環偵測在這種退化場景下,反而可能因為誤判的約束把情況搞得更糟。
+
+RTAB-Map(純 ICP,不同的配準策略)跟 LIO-SAM(不同的特徵提取跟因子圖架構)在同一段資料上都完全沒事(2.28m / 2.33m)——**再次證明沒有一套系統能在所有場景下都保持優勢**,連目前為止最穩健的 FAST-LIO2 也有它明確的弱點場景。

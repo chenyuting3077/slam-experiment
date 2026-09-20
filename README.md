@@ -107,6 +107,24 @@
 
 ![park_dataset 四套系統比較圖(Cartographer 發散、RTAB-Map 部分成功、LIO-SAM 完整跑完但飄了 58m、FAST-LIO2 最準)](docs/images/park/comparison_map_grid_park.png)
 
+## 資料集十一:LegKilo corridor.bag(五套系統首次同場,平台完全不同、帶真實里程計)
+
+前 10 段資料都是人手持/背包式感測器架,這次換成完全不同的平台:[LegKilo 資料集](https://github.com/ouguangjun/Leg-KILO)的 `corridor.bag`——**Unitree Go1 四足機器人**,VLP-16,而且**真的有里程計**(`/state_SDK`,腿部運動學+IMU融合算出來的 `nav_msgs/Odometry`)跟**真實 ground truth**(動作捕捉系統)。也是第一次五套系統(含新加入的 `FAST_LIO_SAM`)同場測試。
+
+這次是為了驗證一個假設:Cartographer 3D 的發散 bug,是不是因為我們的資料集都缺真實里程計、只能純靠 IMU 硬撐?找了使用者自己公司 AMR 專案(`compal_amr_allen/amr_slam`)的 Cartographer 設定檔對照,發現他們的機器人設定確實都有 `use_odometry = true`(接真實輪式/腿式里程計),證實這是「正常」該有的配置。
+
+| 系統 | 狀態 | ATE RMSE(對照真實動作捕捉 ground truth) | 備註 |
+|---|---|---|---|
+| Cartographer 3D(+ 真實腿部 odometry) | ❌ 發散 | — | 接了真實 `/state_SDK` 里程計後,發散幅度從「數千萬公尺」縮小到「約 8600 公尺」——小了約 1000 倍,但仍然發散。原始碼追出來的原因:odometry 只輔助**位置**推算,**旋轉**推算仍然完全依賴同一套有 bug 的 `ImuTracker` 重力追蹤機制,odometry 從機制上就不會繞過根因 |
+| RTAB-Map(純 ICP) | ✅ 成功 | **2.280m** | 426 個關鍵幀,完整跑完 445.9 秒 |
+| LIO-SAM | ✅ 成功 | **2.328m** | 完整跑完 2114 個姿態,跟 RTAB-Map 幾乎同等級 |
+| FAST-LIO2(官方) | ❌ 嚴重發散 | 272.193m | 意外發現:官方版在其他 9 段資料集上都很穩,這次卻嚴重發散。這段走廊很長、兩側幾乎沒有幾何特徵變化(經典的「長走廊幾何退化」場景,`corridor` 這個資料集名稱本身就是設計來考驗這個問題),純里程計(無迴環偵測)的緊耦合 ESKF 系統完全沒有機制糾正這種退化累積的漂移 |
+| FAST_LIO_SAM | ❌ 更嚴重發散 | 61062.212m | 跟 FAST-LIO2 同一套前端,同樣的幾何退化問題,但這次 GTSAM 迴環後端沒有糾正錯誤,反而讓結果變得更誇張(從 272m 惡化到 61 公里等級) |
+
+**這次驗證了兩個重要結論**:①提供真實里程計讓 Cartographer 的發散幅度顯著縮小,但沒有根治——跟原始碼分析的「旋轉推算不受 odometry 影響」完全吻合;②意外發現 FAST-LIO2 系列(緊耦合、無迴環偵測的 ESKF 前端)對「長走廊幾何退化」這種場景特別脆弱,而 RTAB-Map、LIO-SAM 這兩套用不同註冊/後端架構的系統完全沒事——再次印證沒有一套系統能在所有場景下都保持優勢,連一直表現最穩的 FAST-LIO2 也有它的弱點。
+
+![LegKilo corridor 五套系統比較圖(Cartographer 發散、RTAB-Map/LIO-SAM 成功、FAST-LIO2/FAST_LIO_SAM 因長走廊幾何退化嚴重發散)](docs/images/legkilo_corridor/comparison_map_grid_legkilo_corridor.png)
+
 ## 目錄結構
 
 - `DATASETS.md` — 各資料集的特性、格式差異、四套系統移植細節
