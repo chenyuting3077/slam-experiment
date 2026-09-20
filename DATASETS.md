@@ -1,6 +1,6 @@
 # 資料集特性說明
 
-本專案用兩種感測器(VLP-16、Livox Mid360)、三個獨立資料集來源(LIO-SAM 官方、Zenodo、TIERS)、共 9 段序列測試同一組四套 SLAM 系統(Cartographer 3D、RTAB-Map、LIO-SAM、FAST-LIO2),目的是看同一套系統在不同 LiDAR 掃描模式、不同軌跡結構、不同資料集來源下的表現差異。
+本專案用兩種感測器(VLP-16、Livox Mid360)、三個獨立資料集來源(LIO-SAM 官方、Zenodo、TIERS)、共 10 段序列測試同一組四套 SLAM 系統(Cartographer 3D、RTAB-Map、LIO-SAM、FAST-LIO2),目的是看同一套系統在不同 LiDAR 掃描模式、不同軌跡結構、不同資料集來源下的表現差異。
 
 ## 1. Campus(LIO-SAM 官方資料集)
 
@@ -168,3 +168,33 @@ RTAB-Map 的 `icp_odometry` 同樣再次失去追蹤(ICP 旋轉量 0.64~0.93 rad
 | FAST-LIO2 | ✅ 成功,57 個姿態 | 0.538m |
 
 跟 garden_dataset(460m 路徑、誤差 <6cm)相比,LIO-SAM/FAST-LIO2 在這段路徑上的誤差相對路徑長度的比例明顯差很多——純旋轉對這兩套系統的角度追蹤精度也是額外壓力,只是沒有讓它們徹底失去追蹤而已。
+
+## 7. park_dataset(同一個 Google Drive 資料夾,VLP-16,帶真實 GPS 的非閉環路徑)
+
+同一個資料夾裡最後一份官方 demo bag,跟前面幾份(Campus、garden、rotation)不同的地方是**帶了真實 GPS**,而且**不是閉環**。
+
+| 項目 | 內容 |
+|---|---|
+| LiDAR / IMU / GPS | Velodyne VLP-16 + MicroStrain 3DM-GX5-25 + 真實 GPS(`/gps/fix`,狀態碼顯示差分定位) |
+| 幀數 / 時長 | 5,467 幀點雲、560.6 秒 |
+| 路徑長度 | 起終點相距 ~179m(非閉環),ROS1 raw bag 額外含 `/velodyne_packets`、`/diagnostics` 等我們不需要的 topic,轉檔時過濾掉 |
+| Ground truth | 用 GPS 經緯度(equirectangular 投影轉本地 ENU,跟 TIERS 戶外資料集用的同一套方法)算真正的 ATE,不能沿用 Campus/garden 的端到端誤差法(因為不是閉環,終點本來就該跟起點距離 179m) |
+
+### 意外發現的第二個訊息時間戳基準差異(跟 IndoorOffice 那次一樣的坑)
+
+第一次用 bag 的記錄時間(`t`)算 GPS ground truth 時,跟軌跡檔案的 header.stamp 基準完全對不上(相差近 1900 萬秒),`compute_ate.py` 關聯到 0 筆——跟 TIERS `IndoorOffice1`/`IndoorOffice2` 那次一樣的坑,改用 GPS 訊息自己的 `header.stamp` 而不是 bag 記錄時間,就完全對上了。
+
+### Cartographer 這次沒有崩潰,是靜默發散
+
+跟 garden/rotation 不同,這次 Cartographer 沒有踩到任何 `imu_tracker.cc` 的斷言,程序正常存活到底——但檢查 `/tf` 發現 `odom->base_link` 已經飄到數千萬公尺,跟最初在 Mid360 資料集上看到的靜默發散完全一樣。這確認了同一個根因 bug 有兩種可能的呈現方式:數值剛好踩到內部一致性檢查的邊界就崩潰(garden、rotation),沒踩到邊界就安靜地繼續往下發散(Mid360 全部、這次的 park)。
+
+### 四套系統跑測結果——LIO-SAM 意外大幅落後
+
+| 系統 | 狀態 | ATE RMSE |
+|---|---|---|
+| Cartographer 3D | ❌ 發散 | — |
+| RTAB-Map(純 ICP) | ⚠️ 部分成功,105 個關鍵幀 | 0.760m |
+| LIO-SAM | ⚠️ 完整跑完 2630 個姿態,但漂移嚴重 | **57.793m** |
+| FAST-LIO2 | ✅ 成功,完整跑完 546 個姿態,無迴環偵測 | **0.567m** |
+
+這是本專案目前為止最大的系統間反差:FAST-LIO2(0.567m)、RTAB-Map(0.760m)都遠遠贏過 LIO-SAM(57.8m)。渲染出來的地圖顯示 LIO-SAM 的軌跡跟自己重建的點雲對得上、沒有明顯的發散痕跡——問題不是「跑壞了」或「失去追蹤」,是這套官方 ROS2 port 的因子圖優化在這段近 10 分鐘、非閉環的長距離戶外路徑上,累積了遠比另外兩套系統更嚴重的絕對定位漂移。跟 Campus 資料集上 LIO-SAM 是全場最準(0.288m)形成強烈對比,再次印證沒有一套系統能在所有資料集上都保持優勢。

@@ -71,6 +71,13 @@ TILE_SETS = {
         ('LIO-SAM', 'outputs/liosam_garden_map.png', None),
         ('FAST-LIO2', 'outputs/fastlio_garden_map.png', None),
     ],
+    'park': [
+        ('Cartographer 3D', 'outputs/cartographer_park_map.png',
+         'FAILURE\nsilent divergence (no crash this time)\n/tf shows tens of millions of meters\nsame bug, 560s dataset'),
+        ('RTAB-Map (pure ICP)', 'outputs/rtabmap_park_map.png', None),
+        ('LIO-SAM', 'outputs/liosam_park_map.png', None),
+        ('FAST-LIO2', 'outputs/fastlio_park_map.png', None),
+    ],
     'rotation': [
         ('Cartographer 3D', 'outputs/cartographer_rotation_map.png',
          'FAILURE\nhard crash (SIGABRT):\nimu_tracker.cc CHECK_GT(z,0) failed\n-- pure fast rotation alone (3.7 rad/s)\nis enough, no big linear accel needed'),

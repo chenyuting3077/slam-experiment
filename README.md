@@ -92,6 +92,21 @@
 
 ![rotation_dataset 四套系統比較圖(Cartographer 崩潰、RTAB-Map 只有 1 個關鍵幀、LIO-SAM/FAST-LIO2 完整跑完但誤差比例較差)](docs/images/rotation/comparison_map_grid_rotation.png)
 
+## 資料集十:park_dataset(同一個 Google Drive 資料夾,VLP-16,帶真實 GPS 的非閉環路徑)
+
+同一個資料夾裡最後一份官方 demo bag,560.6 秒,**跟 Campus/garden 不同,不是閉環**(帶真實 GPS,終點跟起點相距約 179m),所以改用 GPS(equirectangular 投影轉本地 ENU)當 ground truth 算真正的 ATE,而不是端到端誤差。
+
+| 系統 | 狀態 | ATE RMSE | 備註 |
+|---|---|---|---|
+| Cartographer 3D | ❌ 發散 | — | 這次沒有觸發崩潰斷言,但 `/tf` 顯示 `odom->base_link` 飄到數千萬公尺——跟 Mid360 上的靜默發散一模一樣,確認這個 bug 不只會崩潰,也會在數值剛好沒踩到 CHECK 邊界時安靜發散 |
+| RTAB-Map(純 ICP) | ⚠️ 部分成功 | 0.760m | 只累積了 105 個關鍵幀(遠少於全程對應的幀數),但這一小段精度很好 |
+| LIO-SAM | ⚠️ 完整跑完但誤差很大 | **57.793m** | 完整跑完全部 2630 個姿態,地圖本身內部結構自洽(軌跡跟點雲對得上),但相對 GPS 的絕對位置飄了快 58m——是真正的大幅漂移,不是失去追蹤 |
+| FAST-LIO2 | ✅ 成功 | **0.567m** | 沒有迴環偵測,純里程計在這段 647m 的路徑上只飄了 0.567m,是這次測試裡最準的系統 |
+
+**這是這次意外找到的最大反差**:FAST-LIO2(0.567m)跟 RTAB-Map(0.760m)都遠遠打敗 LIO-SAM(57.8m),而且 LIO-SAM 的軌跡本身看起來完全正常(跟自己的地圖對得上,沒有明顯發散的痕跡)——問題不是「跑壞了」,是這套官方 ROS2 port 在這段近 10 分鐘、非閉環的長距離戶外路徑上,累積的絕對定位漂移遠比另外兩套系統嚴重。跟 Campus(LIO-SAM 0.288m 全場最佳)形成強烈對比,再次印證「哪套系統更好」高度取決於資料集特性,沒有放諸四海皆準的排名。
+
+![park_dataset 四套系統比較圖(Cartographer 發散、RTAB-Map 部分成功、LIO-SAM 完整跑完但飄了 58m、FAST-LIO2 最準)](docs/images/park/comparison_map_grid_park.png)
+
 ## 目錄結構
 
 - `DATASETS.md` — 各資料集的特性、格式差異、四套系統移植細節
