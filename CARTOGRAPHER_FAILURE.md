@@ -105,6 +105,16 @@ OdometryF2M.cpp:622::computeTransform() Registration failed: "libpointmatcher ha
 
 原因是 Cartographer 用一個 `ordered_multi_queue` 機制確保多個感測器來源的訊息按時間正確排序處理——它會等到**每一個已註冊的感測器 topic 都至少收到一筆訊息**之後,才會開始釋放任何資料出去處理(前面幾次崩潰的 log 都能看到這一行:`ordered_multi_queue.cc:172] All sensor data for trajectory 0 is available starting at ...`,代表這個等待機制真實存在)。IMU topic 永遠沒有 publisher,這個條件永遠不會滿足,所以連點雲都不會被處理——不是「繞過 IMU 用純 LiDAR 跑」,是整個 pipeline 直接卡死。這條路不通,已停止嘗試,列為跟調整 `imu_gravity_time_constant` 一樣「試過但沒用」的方向。
 
+## 試過但只有部分幫助:提供真實里程計(而不是完全不用 IMU)
+
+前面「完全不接 IMU」的方向已經證實無法運作(整個 pipeline 卡死)。既然公司 AMR 專案(`compal_amr_allen/amr_slam`)的做法是**保留 IMU、額外加一個真實輪式/腿式里程計**(`use_odometry = true`),而不是移除 IMU,這是另一個更合理的方向:用 [`LegKilo` 資料集](https://github.com/ouguangjun/Leg-KILO)的 `corridor.bag`(445.9 秒,Unitree Go1 四足機器人,Velodyne VLP-16,`/state_SDK` 是真實的腿部運動學里程計,`nav_msgs/Odometry`)測試,把它接進 Cartographer 3D 的 `odom` topic(`use_odometry = true`)。
+
+**先追出原始碼層級的機制**(`pose_extrapolator.cc::AddOdometryData`):提供的 odometry 只會拿連續兩筆姿態算出一個線速度估計,用來輔助**位置**推算;但**旋轉**推算(`ExtrapolateRotation`)仍然呼叫同一個 `ImuTracker`(那個有重力追蹤 bug 的機制)。換句話說,odometry 從機制上就不會繞過我們一直在追的那個根因。
+
+**實測結果驗證了這個理論**:跑完全程 445.9 秒、插入 27 個 submap、**沒有崩潰**(跟完全不接 IMU 不一樣,這次真的有在處理資料),但 `/tf` 顯示 `odom→imu_link` 最終飄到約 **(8653, -6094, -6157)** 公尺——比沒有 odometry 時的「數千萬公尺」等級小了約 1000 倍,但仍然是明顯發散(一段室內走廊不可能有幾千公尺長)。
+
+**結論:提供真實里程計讓情況顯著變好,但沒有根治**——跟原始碼分析完全吻合。這是三個嘗試過的方向裡(調 `imu_gravity_time_constant`、完全不接 IMU、提供真實 odometry)最接近「有效」的一個,但仍然不是真正的修復,列為部分緩解方向。
+
 ## 結論
 
 這是 Cartographer 3D(至少到 2.0.9004 這個版本)IMU 初始化/重力追蹤邏輯本身的限制,不是我們的設定或參數問題:它的重力估計機制假設感測器大部分時間接近靜止或勻速,一旦平臺出現真實的劇烈加速度或轉彎,就沒有任何容錯機制——輕則靜默發散,重則直接斷言崩潰。四套系統裡,LIO-SAM、FAST-LIO2、RTAB-Map 都用不同方式(GTSAM 因子圖的 IMU 預積分、ESKF、純幾何 ICP)處理 IMU 訊號,沒有這種對加速度計讀數的強假設,因此在同樣的劇烈運動場景下都不會發散。
