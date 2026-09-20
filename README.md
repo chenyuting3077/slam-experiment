@@ -1,6 +1,6 @@
 # SLAM 系統比較實驗
 
-用四套 SLAM 系統(Cartographer 3D、RTAB-Map、LIO-SAM、FAST-LIO2)在兩份不同感測器、不同性質的資料集上跑,比較精度跟強健性。兩份資料集的細節、格式差異、跟四套系統各自的移植過程,見 [DATASETS.md](DATASETS.md)。
+用四套 SLAM 系統(Cartographer 3D、RTAB-Map、LIO-SAM、FAST-LIO2)在多份不同感測器、不同來源、不同性質的資料集上跑,比較精度跟強健性。各資料集的細節、格式差異、跟四套系統各自的移植過程,見 [DATASETS.md](DATASETS.md)。
 
 ## 資料集一:Campus(LIO-SAM 官方資料集,Velodyne VLP-16)
 
@@ -44,10 +44,28 @@
 
 ![Mid360 kidnap 比較圖](docs/images/mid360_kidnap/comparison_map_grid_mid360_kidnap.png)
 
+## 資料集四~七:TIERS `multi_modal_lidar_dataset`(獨立第三方來源,同樣是 Mid360)
+
+前三份 Mid360 資料集都來自同一個 Zenodo 上傳者。這 4 段來自完全獨立的 [TIERS 大學資料集](https://github.com/TIERS/multi_modal_lidar_dataset)(2 段戶外道路 + 2 段室內辦公室),用不同的錄製硬體、不同的 ground truth 系統(戶外 GNSS-RTK、室內 MoCap),驗證前面觀察到的 Cartographer 發散 bug 是不是 Zenodo 資料集本身的問題。詳細格式差異、意外發現的 `ros2 bag` 相容性 bug,見 [DATASETS.md](DATASETS.md#4-tiers-multi_modal_lidar_dataset獨立第三方資料集同樣是-mid360)。
+
+| 資料集 | Cartographer 3D | RTAB-Map | LIO-SAM | FAST-LIO2 |
+|---|---|---|---|---|
+| OutdoorRoad_cut1(45.3s/48.3m) | ❌ 發散 | 0.220m | **3.688m** | 0.134m |
+| OutdoorRoad_cut0(66.0s/80.3m) | ❌ 發散 | 0.088m | 0.101m | 0.079m |
+| IndoorOffice1(66.2s) | ❌ 發散 | 0.038m | 0.030m | 0.030m |
+| IndoorOffice2(95.7s) | ❌ 發散 | 0.046m | 0.034m | 0.037m |
+
+(數字為 ATE RMSE,四段資料的三套存活系統都是全程完整追蹤,不像 Zenodo 的困難序列會提早失去追蹤。)
+
+**這份獨立資料集把 Cartographer 的發散 bug 確認到第 6 次**,而且首次驗證了「室內、低速移動」場景一樣會發散,排除了「只在戶外快速運動時才會觸發」的假設。另一個乾淨的發現是**室內場景的精度明顯優於戶外**(4~5cm vs 8~22cm ATE)——室內牆面/家具提供的幾何特徵遠比開放道路密集,對三套存活系統來說都更容易收斂。唯一的例外是 LIO-SAM 在最短的 `OutdoorRoad_cut1` 上明顯落後(3.688m,其他三段都在 0.03~0.10m),但軌跡仍是全程完整、沒有中途發散——是「跑完但精度差」,不是「提早失敗」,確切原因還沒鎖定。
+
+![TIERS OutdoorRoad_cut0 比較圖](docs/images/tiers_cut0/comparison_map_grid_tiers_cut0.png)
+![TIERS IndoorOffice1 比較圖](docs/images/tiers_indoor1/comparison_map_grid_tiers_indoor1.png)
+
 ## 目錄結構
 
-- `DATASETS.md` — 兩份資料集的特性、格式差異、四套系統移植細節
+- `DATASETS.md` — 各資料集的特性、格式差異、四套系統移植細節
 - `outputs/comparison_report.md` — Campus 資料集的完整分析報告
-- `docs/images/` — 靜態地圖渲染圖(campus/、mid360/)
+- `docs/images/` — 靜態地圖渲染圖(campus/、mid360/、mid360_kidnap/、tiers_cut0/、tiers_cut1/、tiers_indoor1/、tiers_indoor2/)
 - `slam_comparison/scripts/` — 所有前處理、匯出、渲染、評估腳本
 - `slam_comparison/config/`、`slam_comparison/launch/` — 各系統的設定檔跟 launch file

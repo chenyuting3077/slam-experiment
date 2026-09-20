@@ -1,6 +1,6 @@
 # 資料集特性說明
 
-本專案用兩份不同感測器、不同性質的資料集測試同一組四套 SLAM 系統(Cartographer 3D、RTAB-Map、LIO-SAM、FAST-LIO2),目的是看同一套系統在不同 LiDAR 掃描模式與不同軌跡結構下的表現差異。
+本專案用兩種感測器(VLP-16、Livox Mid360)、三個獨立資料集來源(LIO-SAM 官方、Zenodo、TIERS)、共 7 段序列測試同一組四套 SLAM 系統(Cartographer 3D、RTAB-Map、LIO-SAM、FAST-LIO2),目的是看同一套系統在不同 LiDAR 掃描模式、不同軌跡結構、不同資料集來源下的表現差異。
 
 ## 1. Campus(LIO-SAM 官方資料集)
 
@@ -69,3 +69,34 @@ Campus 資料集的評估方法(終點誤差)有兩個先天限制:①只看頭�
 | FAST-LIO2 | **0.057m** | 36.7m(4.9%),t≈27s 後開始逐步發散(35m→44m→47m→144m 跳躍上升) | 跟 outdoor_hard_01 上完整跑完 97% 形成強烈對比——同一套系統,換一種「困難類型」就從最穩健變成最早失敗 |
 
 **這是這次三份資料集裡最乾淨的一個發現**:RTAB-Map、LIO-SAM、FAST-LIO2 三套存活系統畫出來的地圖跟軌跡幾乎是**同一個形狀**(見比較圖,三個 J 形轉彎幾乎重疊),失敗的時間點也都落在整段路徑的 5~9% 左右——這不是巧合,強烈指向這個資料集裡在那個時間點附近真的發生了一次「kidnap」事件(感測器被快速位移/短暫遮蔽/資料中斷),三套完全不同架構的系統(圖優化、因子圖、ESKF)在完全沒有重定位機制的情況下,**幾乎在同一瞬間一起失去追蹤**。這跟 outdoor_hard_01(每套系統在不同時間點、因為不同原因失敗)形成鮮明對比,說明「持續運動的穩健性」跟「意外中斷後的重定位能力」是這四套系統都缺乏、但成因完全不同的兩種弱點——FAST-LIO2 在 outdoor_hard 上最穩健,面對 kidnap 卻反而是失敗得最早(4.9%)的系統之一,證明「哪套系統更好」高度取決於失敗模式的種類,沒有放諸四海皆準的排名。
+
+## 4. TIERS `multi_modal_lidar_dataset`(獨立第三方資料集,同樣是 Mid360)
+
+前三份 Mid360 資料集都來自同一個 Zenodo 上傳者。這份[TIERS 大學的多模態 LiDAR 資料集](https://github.com/TIERS/multi_modal_lidar_dataset)是完全獨立的第三方來源,錄製設備、錄製地點、ground truth 系統都不同,用來驗證前面觀察到的現象(尤其是 Cartographer 的發散 bug)是不是這個特定 Zenodo 資料集本身的問題,還是 Mid360 感測器/演算法本身的通病。使用者手動從 OneDrive 下載了其中 4 段:2 段戶外道路(`OutdoorRoad_cut0` 66.0s、`OutdoorRoad_cut1` 45.3s)、2 段室內辦公室(`IndoorOffice1` 66.2s、`IndoorOffice2` 95.7s)。
+
+| 項目 | 內容 |
+|---|---|
+| LiDAR / IMU | Livox Mid360 + 內建 IMU(跟前三份資料集同型號感測器,但完全不同的錄製硬體/校準) |
+| Ground truth | 戶外用真實 **GNSS-RTK**(`/gnss_pose`,`PoseStamped` 但把 lat/lon/alt 直接塞進 `Point` 的 x/y/z),室內用 **MoCap**(`/vrpn_client_node/unitree_b1/pose`,已經是公尺級的本地卡氏座標)——跟前三份資料集「Zenodo 自己附的 TUM 軌跡」是完全不同的獨立 ground truth 來源 |
+| 原始格式差異 | 欄位順序跟語義都跟既有慣例不同:TIERS 是 `x,y,z,intensity,tag,line,timestamp`(`timestamp` 是 float64 的**絕對 epoch 奈秒**,point_step=26),既有慣例(來自 Zenodo)是 `x,y,z,t,intensity,tag,line`(`t` 是 uint32 的**相對於封包起始時間的偏移**,point_step=22);frame_id 也不同(`mid360_frame` vs `livox_frame`,IMU 兩邊都用 `livox_frame`)。寫了新的轉檔腳本 `tiers_to_our_convention.py` 把 TIERS 轉成既有慣例,後面所有 per-system 設定檔/launch file 完全不用改 |
+
+### 意外發現:`rosbags-convert` 產生的 ROS2 bag,Humble 版 `ros2 bag play` 讀不動
+
+轉檔用的 `rosbags` Python 函式庫,對 ROS2 bag 的 `metadata.yaml` 寫出了 schema v9 格式(`type_description_hash` 用多行純量、`offered_qos_profiles` 用 list),但 ROS2 Humble 內建的 `ros2 bag play`(靠 `yaml-cpp` 解析)只認得舊版 v8 格式(這兩個欄位都是純字串)。不相容的後果是**完全靜默的失敗**——`ros2 bag play` 直接在解析階段丟出 `yaml-cpp: bad conversion` 然後立刻以 exit code 0 結束,不會播放任何一筆訊息,但背景任務通知看起來就是「正常播放完畢」。這正是第一次跑 LIO-SAM 在 `OutdoorRoad_cut1` 上完全沒有輸出的根因——不是 LIO-SAM 或轉檔腳本的問題,是這個 bag 從頭到尾就沒被播放過。修法是直接把 `metadata.yaml` 裡這兩個欄位降級成 v8 的字串格式,`ros2 bag play`/`ros2 bag info` 就能正常讀取。
+
+### 四份資料的跑測結果
+
+| 資料集 | Cartographer 3D | RTAB-Map(純 ICP) | LIO-SAM | FAST-LIO2 |
+|---|---|---|---|---|
+| OutdoorRoad_cut1(45.3s / 48.3m) | ❌ 發散(第 3 次獨立確認) | 0.220m(39/39,全程) | **3.688m**(223/223,全程但航向漂移明顯) | 0.134m(44/44,全程) |
+| OutdoorRoad_cut0(66.0s / 80.3m) | ❌ 發散(第 4 次獨立確認) | 0.088m(53/53,全程) | 0.101m(326/326,全程) | 0.079m(65/65,全程) |
+| IndoorOffice1(66.2s) | ❌ 發散(第 5 次獨立確認,首次室內場景) | 0.038m(50/50,全程) | 0.030m(317/317,全程) | 0.030m(65/65,全程) |
+| IndoorOffice2(95.7s) | ❌ 發散(第 6 次獨立確認) | 0.046m(68/77,全程) | 0.034m(383/427,全程) | 0.037m(90/95,全程) |
+
+(表格數字為 ATE RMSE;括號內是「成功關聯到 ground truth 的姿態數 / 該系統輸出的總姿態數」,全部都是「全程」,不像前面 Zenodo 的困難序列會提早失去追蹤。)
+
+**發現一:Cartographer 的發散 bug 在完全獨立的第二個資料集來源上,室內外場景都重現,確認不是 Zenodo 資料集本身的問題**。累計到這裡已經是第 6 次獨立確認(2 個資料集來源 × 3 個 Zenodo 序列 + 2 個資料集來源 × TIERS 4 段中的部分序列,實際上每一段 TIERS 資料都重現了),而且這次特別驗證了「室內、低速移動」的 `IndoorOffice1`/`IndoorOffice2` 也一樣發散——排除了先前「可能只在戶外快速運動時才會觸發」的假設,問題確實出在姿態外推器/IMU 初始化這一層,跟具體場景內容無關。
+
+**發現二:室內場景的 ATE 明顯優於戶外(4~5cm vs 8~22cm)**,三套存活系統在兩段室內資料都壓在 5cm 以內,是所有 Mid360 測試裡最好的成績,原因很直觀——辦公室內牆面、家具提供的幾何特徵遠比開放道路密集,ICP/scan-matching 更容易收斂。
+
+**發現三:LIO-SAM 在 `OutdoorRoad_cut1` 上明顯落後(3.688m vs 其他三段資料的 0.030~0.101m)**,但軌跡是完整的(全程 223 個姿態,不是像 Zenodo hard 序列那樣中途發散或凍結)——是「跑完全程但精度差」,不是「提早失敗」。这段資料本身最短(45.3s)、路徑也最短(48.3m),推測跟這個社群 fork 的因子圖優化在資料量不足時収斂較差有關,但另外三段(包含更短的室內資料)並沒有出現同樣的問題,確切原因還沒有進一步鎖定,列為觀察到的現象而非確定的結論。
