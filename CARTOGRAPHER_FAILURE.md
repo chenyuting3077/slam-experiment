@@ -1,0 +1,76 @@
+# Cartographer 3D 失敗原因調查
+
+## 背景
+
+Cartographer 3D 在這個專案的 4 個 Mid360 資料集來源(Zenodo `outdoor_hard_01`、`outdoor_kidnap`、TIERS 的 `OutdoorRoad_cut0`/`cut1`/`IndoorOffice1`/`IndoorOffice2`,共 6 個獨立序列)上,全部都在播放開始後幾秒內就發散——姿態飄到數千萬公尺外,pose graph/submap 日誌完全沒有報錯,難以事先察覺。嘗試調整 `TRAJECTORY_BUILDER_3D.imu_gravity_time_constant`(預設 10s)兩個方向都沒解決:調小(→1s)讓 submap 插不進去,調大(→30s)發散得更快。
+
+在測試 VLP-16 的 `garden_dataset`(LIO-SAM 官方 demo bag)時,Cartographer 3D **直接硬崩潰**(不是靜默發散),留下完整的 stack trace 跟明確的錯誤訊息,才第一次抓到問題的確切根源。
+
+## 崩潰現場
+
+```
+[cartographer_node] local_trajectory_builder_3d.cc:149] IMU not yet initialized.
+[cartographer_node] local_trajectory_builder_3d.cc:159] Extrapolator is still initializing.
+[cartographer_node] pose_graph_3d.cc:136] Inserted submap (0, 0).
+[cartographer_node] F imu_tracker.cc:68] Check failed: (orientation_ * gravity_vector_).normalized().z() > 0.99 (0 vs. 0.99)
+[cartographer_node]     cartographer::mapping::ImuTracker::AddImuLinearAccelerationObservation()
+[cartographer_node]     cartographer::mapping::PoseExtrapolator::AdvanceImuTracker()
+[cartographer_node]     cartographer::mapping::PoseExtrapolator::ExtrapolateRotation()
+[cartographer_node]     cartographer::mapping::PoseExtrapolator::ExtrapolatePose()
+[cartographer_node]     cartographer_ros::Node::PublishLocalTrajectoryData()
+process has died [pid 274723, exit code -6, ...]
+```
+
+崩在播放開始後約 27 秒——同一段時間,`/imu_correct` 的原始讀數顯示加速度計幅值飆到 11+ m/s²(遠高於重力 9.8)、角速度衝到 0.5 rad/s(一個急轉彎),是**真實的劇烈運動**,不是壞資料或雜訊。
+
+## 原始碼追出的機制
+
+用 `apt-get source ros-jazzy-cartographer` 抓官方原始碼(版本 2.0.9004),對照 `cartographer/mapping/imu_tracker.cc`:
+
+```cpp
+void ImuTracker::AddImuLinearAccelerationObservation(
+    const Eigen::Vector3d& imu_linear_acceleration) {
+  // 用指數移動平均更新 gravity_vector_,平滑速度由 imu_gravity_time_constant 控制
+  const double alpha = 1. - std::exp(-delta_t / imu_gravity_time_constant_);
+  gravity_vector_ =
+      (1. - alpha) * gravity_vector_ + alpha * imu_linear_acceleration;
+  // 用當前的 gravity_vector_ 反推姿態
+  const Eigen::Quaterniond rotation = FromTwoVectors(
+      gravity_vector_, orientation_.conjugate() * Eigen::Vector3d::UnitZ());
+  orientation_ = (orientation_ * rotation).normalized();
+  CHECK_GT((orientation_ * gravity_vector_).z(), 0.);
+  CHECK_GT((orientation_ * gravity_vector_).normalized().z(), 0.99);  // <- 這裡崩潰
+}
+```
+
+以及 `cartographer/mapping/pose_extrapolator.cc`:
+
+```cpp
+void PoseExtrapolator::AdvanceImuTracker(const common::Time time,
+                                         ImuTracker* const imu_tracker) const {
+  ...
+  // 把佇列裡累積的所有 IMU 訊息,從上次的時間點到現在,一次性 replay 過一遍
+  while (it != imu_data_.end() && it->time < time) {
+    imu_tracker->Advance(it->time);
+    imu_tracker->AddImuLinearAccelerationObservation(it->linear_acceleration);
+    imu_tracker->AddImuAngularVelocityObservation(it->angular_velocity);
+    ++it;
+  }
+  ...
+}
+```
+
+`AdvanceImuTracker` 在每次姿態外推(`ExtrapolatePose`/`ExtrapolateRotation`,即時運作下高頻率呼叫)時,把佇列裡累積的 IMU 訊息一次性 replay。這整套機制的隱含假設是:**加速度計讀數大部分時間都接近純重力**,只有在這個前提下,把它直接拿來做指數移動平均、當作重力方向的估計,才是合理的。
+
+`gravity_vector_` 這個內部狀態,本質上是「目前估計的重力方向,表示在 IMU 本體座標系下」。每次新的加速度讀數進來,就用 `alpha`(由 `imu_gravity_time_constant` 決定平滑速度)把它混進來。當感測器承受**真實的、非重力方向的劇烈加速度**(急轉彎、快速啟停)時,這個估計值會被拖離真正的垂直方向。如果偏離得夠多,`FromTwoVectors` 算出來的姿態校正跟已經累積的姿態狀態不再自洽,就會直接踩到第 68 行那個斷言,整個程序 `abort()`。
+
+## 崩潰 vs. 靜默發散,是同一個根因的兩種呈現方式
+
+- **VLP-16(garden_dataset)**:走路時的一個急轉彎,剛好讓數值踩到 `CHECK_GT(..., 0.99)` 這條邊界,直接崩潰、留下明確的錯誤訊息。
+- **Mid360(6 個資料集)**:官方標示的「快速運動」情境,觸發的是同一個機制,但數值沒有剛好踩到那條斷言的邊界——`gravity_vector_` 被拖偏,反推出一個「數學上合法但物理上錯誤」的姿態,沒有觸發 CHECK,程序不會崩潰、也不會報錯,但姿態外推器從此開始用這個錯誤的姿態繼續推算,一步步二次方式發散,幾分鐘內飄到數千萬公尺外。
+
+這也解釋了為什麼調 `imu_gravity_time_constant` 兩個方向都沒用:這個參數只控制指數移動平均的**平滑速度**,並不會修正「劇烈運動時,加速度計讀數本來就不該直接當重力向量用」這個根本的建模假設缺陷。調小讓平滑跟不上真實運動的變化速度;調大則讓一次被拖偏的估計值花更久才能被真實重力訊號洗回來——兩個方向都只是在同一個脆弱機制裡調整暴露的時間點跟嚴重程度,無法根治。
+
+## 結論
+
+這是 Cartographer 3D(至少到 2.0.9004 這個版本)IMU 初始化/重力追蹤邏輯本身的限制,不是我們的設定或參數問題:它的重力估計機制假設感測器大部分時間接近靜止或勻速,一旦平臺出現真實的劇烈加速度或轉彎,就沒有任何容錯機制——輕則靜默發散,重則直接斷言崩潰。四套系統裡,LIO-SAM、FAST-LIO2、RTAB-Map 都用不同方式(GTSAM 因子圖的 IMU 預積分、ESKF、純幾何 ICP)處理 IMU 訊號,沒有這種對加速度計讀數的強假設,因此在同樣的劇烈運動場景下都不會發散。
