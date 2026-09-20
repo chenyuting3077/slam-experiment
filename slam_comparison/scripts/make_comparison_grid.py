@@ -86,6 +86,16 @@ TILE_SETS = {
         ('LIO-SAM', 'outputs/liosam_rotation_map.png', None),
         ('FAST-LIO2', 'outputs/fastlio_rotation_map.png', None),
     ],
+    'legkilo_corridor': [
+        ('Cartographer 3D (+ real leg odom)', 'outputs/cartographer_legkilo_corridor_map.png',
+         'FAILURE\nsilent divergence to ~8600m\neven WITH real /state_SDK odometry\n(~1000x smaller than without odom,\nbut still wrong -- see CARTOGRAPHER_FAILURE.md)'),
+        ('RTAB-Map (pure ICP)', 'outputs/rtabmap_legkilo_corridor_map.png', None),
+        ('LIO-SAM', 'outputs/liosam_legkilo_corridor_map.png', None),
+        ('FAST-LIO2 (official)', 'outputs/fastlio_legkilo_corridor_map.png',
+         'FAILURE\nATE 272m -- classic long feature-poor\ncorridor degeneracy, front-end ESKF\nhas no loop closure to correct it'),
+        ('FAST_LIO_SAM', 'outputs/fastlio_sam_legkilo_corridor_map.png',
+         'FAILURE\nATE 61062m -- same front-end\ndegeneracy as FAST-LIO2, made\ncatastrophically worse by the backend'),
+    ],
 }
 DEFAULT_TILES = TILE_SETS['campus']
 
@@ -140,7 +150,8 @@ def main():
 
     tile_w, tile_h = ref_size
     label_h = args.label_height
-    grid_w, grid_h = tile_w * 2, (tile_h + label_h) * 2
+    num_rows = (len(tiles) + 1) // 2
+    grid_w, grid_h = tile_w * 2, (tile_h + label_h) * num_rows
 
     grid = Image.new('RGB', (grid_w, grid_h), (0, 0, 0))
     draw = ImageDraw.Draw(grid)
