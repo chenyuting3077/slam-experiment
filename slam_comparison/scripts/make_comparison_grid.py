@@ -49,6 +49,13 @@ TILE_SETS = {
         ('LIO-SAM', 'outputs/liosam_tiers_cut0_map.png', None),
         ('FAST-LIO2', 'outputs/fastlio_tiers_cut0_map.png', None),
     ],
+    'tiers_indoor1': [
+        ('Cartographer 3D', 'outputs/cartographer_tiers_indoor1_map.png',
+         'FAILURE\nsame instant divergence\n(5th dataset, indoor scene too)'),
+        ('RTAB-Map (pure ICP)', 'outputs/rtabmap_tiers_indoor1_map.png', None),
+        ('LIO-SAM', 'outputs/liosam_tiers_indoor1_map.png', None),
+        ('FAST-LIO2', 'outputs/fastlio_tiers_indoor1_map.png', None),
+    ],
 }
 DEFAULT_TILES = TILE_SETS['campus']
 
