@@ -97,6 +97,14 @@ OdometryF2M.cpp:622::computeTransform() Registration failed: "libpointmatcher ha
 
 這代表**同一個真實世界的急轉彎事件,分別以兩種完全不同的機制,讓兩套架構迥異的系統雙雙失效**:Cartographer 的 IMU 重力假設被打破後觸發硬斷言崩潰;RTAB-Map 的 frame-to-model ICP 找不到合理的配準解後永久丟失追蹤、沒有重定位機制挽回。LIO-SAM(GTSAM 因子圖 + IMU 預積分)跟 FAST-LIO2(ESKF 緊耦合)在同一段資料上完全沒有受影響,端到端誤差都在 6 公分以內——再次印證這四套系統對「劇烈運動」的容錯能力,取決於各自完全不同的架構假設,不是任何單一參數能調出來的差異。
 
+## 試過但沒用:完全不接 IMU
+
+既然根因是 IMU 重力追蹤機制,一個直覺的想法是:能不能乾脆不要餵 IMU 給 Cartographer,讓它純粹靠 LiDAR scan-matching 跑?3D 的 `TRAJECTORY_BUILDER_3D` 沒有像 2D 版本那樣的 `use_imu_data` 開關,但理論上如果 IMU 訂閱的 topic 完全沒有任何 publisher,`imu_data_` 佇列會一直是空的,`PoseExtrapolator::AdvanceImuTracker` 應該會走進「沒有 IMU 資料」的分支,用固定的假重力向量 `Eigen::Vector3d::UnitZ()` 取代真實讀數——理論上永遠不會踩到那個斷言。
+
+實測(`cartographer_mid360_noimu.launch.py`,故意不 remap `imu` topic,在 TIERS `OutdoorRoad_cut1` 上測試,用獨立的 `ROS_DOMAIN_ID` 避免跟其他工作衝突):**不會崩潰,但也完全不會動**。整個 45 秒的播放期間,`cartographer_node` 只用了 1 秒的 CPU 時間,沒有任何 `/tf` 輸出,pose graph 沒有任何 submap 被插入。
+
+原因是 Cartographer 用一個 `ordered_multi_queue` 機制確保多個感測器來源的訊息按時間正確排序處理——它會等到**每一個已註冊的感測器 topic 都至少收到一筆訊息**之後,才會開始釋放任何資料出去處理(前面幾次崩潰的 log 都能看到這一行:`ordered_multi_queue.cc:172] All sensor data for trajectory 0 is available starting at ...`,代表這個等待機制真實存在)。IMU topic 永遠沒有 publisher,這個條件永遠不會滿足,所以連點雲都不會被處理——不是「繞過 IMU 用純 LiDAR 跑」,是整個 pipeline 直接卡死。這條路不通,已停止嘗試,列為跟調整 `imu_gravity_time_constant` 一樣「試過但沒用」的方向。
+
 ## 結論
 
 這是 Cartographer 3D(至少到 2.0.9004 這個版本)IMU 初始化/重力追蹤邏輯本身的限制,不是我們的設定或參數問題:它的重力估計機制假設感測器大部分時間接近靜止或勻速,一旦平臺出現真實的劇烈加速度或轉彎,就沒有任何容錯機制——輕則靜默發散,重則直接斷言崩潰。四套系統裡,LIO-SAM、FAST-LIO2、RTAB-Map 都用不同方式(GTSAM 因子圖的 IMU 預積分、ESKF、純幾何 ICP)處理 IMU 訊號,沒有這種對加速度計讀數的強假設,因此在同樣的劇烈運動場景下都不會發散。
