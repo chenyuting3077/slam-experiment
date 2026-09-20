@@ -1,6 +1,6 @@
 # 資料集特性說明
 
-本專案用兩種感測器(VLP-16、Livox Mid360)、三個獨立資料集來源(LIO-SAM 官方、Zenodo、TIERS)、共 8 段序列測試同一組四套 SLAM 系統(Cartographer 3D、RTAB-Map、LIO-SAM、FAST-LIO2),目的是看同一套系統在不同 LiDAR 掃描模式、不同軌跡結構、不同資料集來源下的表現差異。
+本專案用兩種感測器(VLP-16、Livox Mid360)、三個獨立資料集來源(LIO-SAM 官方、Zenodo、TIERS)、共 9 段序列測試同一組四套 SLAM 系統(Cartographer 3D、RTAB-Map、LIO-SAM、FAST-LIO2),目的是看同一套系統在不同 LiDAR 掃描模式、不同軌跡結構、不同資料集來源下的表現差異。
 
 ## 1. Campus(LIO-SAM 官方資料集)
 
@@ -136,3 +136,35 @@ LIO-SAM 官方 demo bag(Campus、garden 都是同一套錄製流程)的 `/points
 | FAST-LIO2 | ✅ 成功,完整跑完 359 個姿態,無迴環偵測 | **0.021m** |
 
 同一個真實世界的急轉彎事件,用兩種完全不同的機制讓 Cartographer 跟 RTAB-Map 雙雙失效,LIO-SAM 跟 FAST-LIO2 完全沒受影響——再次證明四套系統對劇烈運動的容錯能力,取決於各自完全不同的架構假設(GTSAM 因子圖 + IMU 預積分 vs. ESKF 緊耦合 vs. 依賴加速度計當重力基準的姿態外推器 vs. 沒有重定位機制的 frame-to-model ICP),不是任何單一參數能調出來的差異。
+
+## 6. rotation_dataset(同一個 Google Drive 資料夾,VLP-16,原地快速旋轉測試)
+
+同一個資料夾裡另一份官方 demo bag,官方設計成測試「原地快速旋轉」。
+
+| 項目 | 內容 |
+|---|---|
+| LiDAR / IMU | Velodyne VLP-16 + MicroStrain 3DM-GX5-25(跟 Campus/garden 完全相同的錄製流程) |
+| 幀數 / 時長 | 582 幀點雲、58.6 秒 |
+| 路徑長度 | ~12.6m(幾乎原地不動,最大角速度 3.73 rad/s ≈ 214°/s) |
+| Ground truth | 無,用端到端誤差評估 |
+
+### 確認 Cartographer 的 bug 不需要線性加速度衝擊,純旋轉就夠
+
+Cartographer 再次崩潰,但這次踩到 `imu_tracker.cc` 裡**另一條**斷言(第 67 行 `CHECK_GT((orientation_ * gravity_vector_).z(), 0.)`,而不是 garden_dataset 踩到的第 68 行),算出來的值是幾乎精確的 0(`-1.03e-86`,徹底退化)。這確認了 `ImuTracker::Advance()` 每次用角速度旋轉 `gravity_vector_` 這個內部狀態本身就是脆弱的——garden_dataset 是「加速度計混入太多非重力訊號」把它帶偏,rotation_dataset 是「角速度累積旋轉太劇烈」把它帶偏,兩條不同的路徑,但踩到的是同一套沒有容錯機制的重力追蹤邏輯。完整分析見 [CARTOGRAPHER_FAILURE.md](../CARTOGRAPHER_FAILURE.md)。
+
+RTAB-Map 的 `icp_odometry` 同樣再次失去追蹤(ICP 旋轉量 0.64~0.93 rad 持續超出 0.78 rad 的限制),整段 58.6 秒只留下 1 個關鍵幀——確認純旋轉本身(不需要搭配線性加速度)就足以讓 frame-to-model ICP 完全失能。
+
+### 意外發現並修好 `fix_pointcloud_rowstep.py` 自己的一個 bug
+
+這支腳本原本只有 PointCloud2 訊息會被正確反序列化再重新序列化,其他 topic(包含 IMU)的 rawdata 是直接從 ROS1 來源原樣寫進宣告為 ROS2 CDR 格式的輸出 bag——這是格式不匹配,但在 garden_dataset 上剛好沒讓數值壞到觸發任何檢查(LIO-SAM 照樣拿到能用的姿態四元數)。在 rotation_dataset 上就沒這麼幸運:LIO-SAM 收到的姿態四元數退化到 norm < 0.1,直接觸發它自己的 `imuConverter()` 防呆機制(`"Invalid quaternion, please use a 9-axis IMU!"`)並主動 `rclcpp::shutdown()`。修法是讓迴圈裡每一筆訊息都呼叫 `typestore.serialize_cdr` 重新序列化,不只 PointCloud2。
+
+### 四套系統跑測結果
+
+| 系統 | 狀態 | 端到端誤差(全長 ~12.6m) |
+|---|---|---|
+| Cartographer 3D | ❌ 崩潰 | — |
+| RTAB-Map(純 ICP) | ❌ 失去追蹤 | — |
+| LIO-SAM | ✅ 成功,249 個姿態 | 0.443m |
+| FAST-LIO2 | ✅ 成功,57 個姿態 | 0.538m |
+
+跟 garden_dataset(460m 路徑、誤差 <6cm)相比,LIO-SAM/FAST-LIO2 在這段路徑上的誤差相對路徑長度的比例明顯差很多——純旋轉對這兩套系統的角度追蹤精度也是額外壓力,只是沒有讓它們徹底失去追蹤而已。

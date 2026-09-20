@@ -71,6 +71,14 @@ TILE_SETS = {
         ('LIO-SAM', 'outputs/liosam_garden_map.png', None),
         ('FAST-LIO2', 'outputs/fastlio_garden_map.png', None),
     ],
+    'rotation': [
+        ('Cartographer 3D', 'outputs/cartographer_rotation_map.png',
+         'FAILURE\nhard crash (SIGABRT):\nimu_tracker.cc CHECK_GT(z,0) failed\n-- pure fast rotation alone (3.7 rad/s)\nis enough, no big linear accel needed'),
+        ('RTAB-Map (pure ICP)', 'outputs/rtabmap_rotation_map.png',
+         'FAILURE\nICP rotation limit exceeded\nimmediately (fast in-place spin)\n-- only 1 keyframe for the whole run'),
+        ('LIO-SAM', 'outputs/liosam_rotation_map.png', None),
+        ('FAST-LIO2', 'outputs/fastlio_rotation_map.png', None),
+    ],
 }
 DEFAULT_TILES = TILE_SETS['campus']
 

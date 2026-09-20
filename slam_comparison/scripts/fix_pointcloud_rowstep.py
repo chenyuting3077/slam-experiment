@@ -6,6 +6,15 @@ The LIO-SAM sample ROS1 bags publish PointCloud2 with row_step left at 0
 through unchanged. Cartographer doesn't validate row_step, but RTAB-Map's
 icp_odometry asserts data.size() == row_step * height and aborts. Since
 data.size() == width * point_step here, row_step is just recomputed.
+
+Every message is deserialized and re-serialized via typestore.serialize_cdr,
+not just PointCloud2 -- earlier versions only touched PointCloud2 and wrote
+every other topic's rawdata straight through from the ROS1 source, which is
+ROS1-serialized bytes mislabeled as ROS2 CDR in the output bag. That happened
+to still produce plausible-looking IMU orientation values on one dataset
+(garden_dataset) but corrupted them into a near-zero quaternion on another
+(rotation_dataset), crashing lio_sam with "Invalid quaternion, please use a
+9-axis IMU!". Always re-serializing avoids the format mismatch entirely.
 """
 import sys
 from pathlib import Path
@@ -31,13 +40,13 @@ def main(src: str, dst: str, version: int = 9) -> None:
         for conn, timestamp, rawdata in reader.messages():
             total += 1
             out_conn = conn_map[conn.id]
+            msg = reader.deserialize(rawdata, conn.msgtype)
             if conn.msgtype == 'sensor_msgs/msg/PointCloud2':
-                msg = reader.deserialize(rawdata, conn.msgtype)
                 expected_row_step = msg.width * msg.point_step
                 if msg.row_step != expected_row_step:
                     msg.row_step = expected_row_step
                     fixed_count += 1
-                    rawdata = typestore.serialize_cdr(msg, conn.msgtype)
+            rawdata = typestore.serialize_cdr(msg, conn.msgtype)
             writer.write(out_conn, timestamp, rawdata)
 
         print(f'Total messages: {total}, PointCloud2 row_step fixed: {fixed_count}')

@@ -77,6 +77,21 @@
 
 ![garden_dataset 四套系統比較圖(Cartographer 崩潰、RTAB-Map 只有 1 個關鍵幀、LIO-SAM/FAST-LIO2 完整跑完)](docs/images/garden/comparison_map_grid_garden.png)
 
+## 資料集九:rotation_dataset(同一個 Google Drive 資料夾,VLP-16,原地快速旋轉測試)
+
+同一個資料夾裡另一份官方 demo bag,官方設計成「原地快速旋轉」(58.6 秒,幾乎沒有平移,最大角速度 3.73 rad/s)。這次驗證了**純旋轉、不需要明顯線性加速度**,也足以觸發 Cartographer 的同一套 bug——但踩到的是 `imu_tracker.cc` 裡的另一條斷言。詳見更新後的 [CARTOGRAPHER_FAILURE.md](CARTOGRAPHER_FAILURE.md)。
+
+| 系統 | 狀態 | 端到端誤差(全長 ~12.6m) | 備註 |
+|---|---|---|---|
+| Cartographer 3D | ❌ 崩潰 | — | `imu_tracker.cc:67` 的另一條斷言:`(orientation_ * gravity_vector_).z() > 0`,算出來的值是幾乎精確的 0(徹底退化,不是「有點偏」) |
+| RTAB-Map(純 ICP) | ❌ 失去追蹤 | — | ICP 旋轉量持續超出限制(0.64~0.93 rad vs. 限制 0.78 rad),整段只留下 1 個關鍵幀 |
+| LIO-SAM | ✅ 成功 | 0.443m | 完整跑完 249 個姿態,但相對這段只有 12.6m 的路徑,誤差比例明顯比 garden_dataset 差 |
+| FAST-LIO2 | ✅ 成功 | 0.538m | 完整跑完 57 個姿態,同樣顯示純旋轉對角度追蹤精度是額外壓力 |
+
+過程中也修好了 `fix_pointcloud_rowstep.py` 本身的一個既有 bug:它只有 PointCloud2 訊息會被正確重新序列化,其他 topic(包含 IMU)的原始 ROS1 bytes 會被直接寫進宣告為 ROS2 CDR 格式的輸出檔——這在 garden_dataset 上恰好沒讓數值壞到觸發任何檢查,但在 rotation_dataset 上讓 LIO-SAM 讀到退化的姿態四元數,直接觸發它自己的「Invalid quaternion, please use a 9-axis IMU!」防呆並主動關閉。修法是讓每一筆訊息(不只 PointCloud2)都透過 `typestore.serialize_cdr` 正確重新序列化。
+
+![rotation_dataset 四套系統比較圖(Cartographer 崩潰、RTAB-Map 只有 1 個關鍵幀、LIO-SAM/FAST-LIO2 完整跑完但誤差比例較差)](docs/images/rotation/comparison_map_grid_rotation.png)
+
 ## 目錄結構
 
 - `DATASETS.md` — 各資料集的特性、格式差異、四套系統移植細節

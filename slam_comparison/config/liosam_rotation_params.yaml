@@ -1,0 +1,94 @@
+/**:
+  ros__parameters:
+
+    # Topics -- the LIO-SAM Campus bag only has /points_raw, /imu_correct, /gps/fix
+    pointCloudTopic: "/points_raw"
+    imuTopic: "/imu_correct"
+    odomTopic: "odometry/imu"
+    gpsTopic: "odometry/gpsz"
+
+    # Frames -- lidarFrame is deliberately set equal to baselinkFrame: our
+    # extrinsics are all identity/zero anyway, and imuPreintegration.cpp
+    # only does its (flaky, timestamp-sensitive) lidarFrame<->baselinkFrame
+    # TF lookup `if (lidarFrame != baselinkFrame)`, so keeping them equal
+    # skips that lookup entirely instead of racing it at startup.
+    lidarFrame: "base_link"
+    baselinkFrame: "base_link"
+    odometryFrame: "odom"
+    mapFrame: "map"
+
+    useImuHeadingInitialization: false
+    useGpsElevation: false
+    gpsCovThreshold: 2.0
+    poseCovThreshold: 25.0
+
+    savePCD: true
+    savePCDDirectory: "/outputs/liosam_rotation/"
+
+    # Sensor Settings -- VLP-16, not the stock Ouster-64 example
+    sensor: velodyne
+    N_SCAN: 16
+    Horizon_SCAN: 1800
+    downsampleRate: 1
+    lidarMinRange: 0.5
+    lidarMaxRange: 100.0
+
+    imuAccNoise: 3.9939570888238808e-03
+    imuGyrNoise: 1.5636343949698187e-03
+    imuAccBiasN: 6.4356659353532566e-05
+    imuGyrBiasN: 3.5640318696367613e-05
+
+    imuGravity: 9.80511
+    imuRPYWeight: 0.01
+
+    # /imu_correct is already pre-rotated into the lidar-aligned frame by
+    # LIO-SAM's own imuConverter at recording time (extrinsicTrans=[0,0,0] in
+    # the original recorder's params), so consuming it directly means our
+    # own extrinsics here must be identity -- applying the rotation twice
+    # would be wrong.
+    extrinsicTrans: [ 0.0, 0.0, 0.0 ]
+    extrinsicRot: [ 1.0, 0.0, 0.0,
+                    0.0, 1.0, 0.0,
+                    0.0, 0.0, 1.0 ]
+    extrinsicRPY: [ 1.0, 0.0, 0.0,
+                    0.0, 1.0, 0.0,
+                    0.0, 0.0, 1.0 ]
+
+    edgeThreshold: 1.0
+    surfThreshold: 0.1
+    edgeFeatureMinValidNum: 10
+    surfFeatureMinValidNum: 100
+
+    odometrySurfLeafSize: 0.4
+    mappingCornerLeafSize: 0.2
+    mappingSurfLeafSize: 0.4
+
+    z_tollerance: 1000.0
+    rotation_tollerance: 1000.0
+
+    numberOfCores: 4
+    mappingProcessInterval: 0.15
+
+    surroundingkeyframeAddingDistThreshold: 1.0
+    surroundingkeyframeAddingAngleThreshold: 0.2
+    surroundingKeyframeDensity: 2.0
+    surroundingKeyframeSearchRadius: 50.0
+
+    loopClosureEnableFlag: true
+    loopClosureFrequency: 1.0
+    surroundingKeyframeSize: 50
+    # Default 15.0 assumes drift stays small enough that a revisited place
+    # is still within 15m of its old keyframe. imuPreintegration keeps
+    # crashing (GTSAM IndeterminantLinearSystemException on bias b0) in
+    # this ROS2 port, so mapOptimization loses its high-rate initial-guess
+    # odometry and drifts more than that -- our first full run's endpoint
+    # error was 38m with zero loop closures ever found. Confirmed fix:
+    # widening this to 60.0 dropped the endpoint error to 0.288m (paper: 0.12m).
+    historyKeyframeSearchRadius: 60.0
+    historyKeyframeSearchTimeDiff: 30.0
+    historyKeyframeSearchNum: 25
+    historyKeyframeFitnessScore: 0.3
+
+    globalMapVisualizationSearchRadius: 1000.0
+    globalMapVisualizationPoseDensity: 10.0
+    globalMapVisualizationLeafSize: 1.0

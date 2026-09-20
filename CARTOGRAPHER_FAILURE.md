@@ -71,6 +71,20 @@ void PoseExtrapolator::AdvanceImuTracker(const common::Time time,
 
 這也解釋了為什麼調 `imu_gravity_time_constant` 兩個方向都沒用:這個參數只控制指數移動平均的**平滑速度**,並不會修正「劇烈運動時,加速度計讀數本來就不該直接當重力向量用」這個根本的建模假設缺陷。調小讓平滑跟不上真實運動的變化速度;調大則讓一次被拖偏的估計值花更久才能被真實重力訊號洗回來——兩個方向都只是在同一個脆弱機制裡調整暴露的時間點跟嚴重程度,無法根治。
 
+## 第二次獨立確認:純旋轉(沒有明顯線性加速度)也會觸發,而且是另一條斷言
+
+在同一個 Google Drive 資料夾裡另一份官方 demo bag `rotation_dataset.bag`(58.6 秒,官方設計成「原地快速旋轉」測試,幾乎沒有平移,最大角速度 3.73 rad/s,約 214°/s)上,Cartographer **又崩潰了**,但這次踩到的是同一支程式碼裡的**另一條斷言**:
+
+```
+F imu_tracker.cc:67] Check failed: (orientation_ * gravity_vector_).z() > 0. (-1.02958e-86 vs. 0)
+```
+
+第 67 行(`CHECK_GT((orientation_ * gravity_vector_).z(), 0.)`)比第 68 行的容忍度更寬鬆(只要求同向,不要求對齊到 0.99 的餘弦相似度),但這次算出來的值是**幾乎精確的 0**(浮點雜訊等級的 `-1.03e-86`)——代表反推出來的重力方向跟垂直軸完全垂直,是徹底退化的結果,不是「有點偏」而已。
+
+這確認了一個重要的細節:**觸發這個 bug 不需要真實的線性加速度衝擊,單純足夠劇烈的旋轉就夠了**。因為 `ImuTracker::Advance()` 每次都用當前累積的角速度去旋轉 `gravity_vector_`(`gravity_vector_ = rotation.conjugate() * gravity_vector_`),旋轉越劇烈、旋轉之間累積的次數越多,這個內部狀態就越容易被帶到跟真實重力方向完全脫節的位置。garden_dataset 的急轉彎(線性加速度 11+ m/s²、角速度 0.5 rad/s)跟 rotation_dataset 的快速原地旋轉(角速度 3.73 rad/s,線性加速度反而更平緩)分別從「加速度計混入太多非重力訊號」跟「角速度累積旋轉太劇烈」兩個不同路徑,踩到了同一套機制裡的兩條不同斷言——但根因是同一個:`ImuTracker` 沒有任何機制偵測「目前這個重力估計已經不可信」,只會在數值徹底不自洽時用斷言崩潰收場。
+
+同一次測試裡,RTAB-Map 的 `icp_odometry` 也再次失去追蹤(`libpointmatcher` 回報旋轉量 0.64~0.93 rad 超出 `Icp/MaxCorrespondenceDistance` 對應的旋轉限制 0.78 rad),整段 58.6 秒只留下 1 個關鍵幀——跟 garden_dataset 的失敗模式完全一致,进一步確認「劇烈旋轉本身」(不需要搭配線性加速度)就足以讓 frame-to-model ICP 完全失能。LIO-SAM(249 個姿態)跟 FAST-LIO2(57 個姿態)都完整跑完,但因為這是近乎原地旋轉、路徑長度只有 ~12.6m,端到端誤差(0.44m / 0.54m)相對路徑長度的比例明顯比 garden_dataset 的大迴圈(誤差 <6cm、相對誤差 <0.02%)差很多——說明**純旋轉對所有系統的角度追蹤精度都是一種額外壓力,只是沒有讓 LIO-SAM/FAST-LIO2 徹底失去追蹤而已**。
+
 ## 交叉驗證:同一個急轉彎,也讓 RTAB-Map 永久失去追蹤
 
 同一次 `garden_dataset` 測試裡,RTAB-Map(純 ICP,`icp_odometry`)在完全獨立的機制下,對同一個事件做出了不同但同樣是失敗的反應。log 顯示:
