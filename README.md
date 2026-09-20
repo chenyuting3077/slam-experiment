@@ -62,10 +62,26 @@
 ![TIERS OutdoorRoad_cut0 比較圖](docs/images/tiers_cut0/comparison_map_grid_tiers_cut0.png)
 ![TIERS IndoorOffice1 比較圖](docs/images/tiers_indoor1/comparison_map_grid_tiers_indoor1.png)
 
+## 資料集八:garden_dataset(LIO-SAM 官方 demo bag,VLP-16,同一個 Google Drive 資料夾)
+
+回到 VLP-16(跟 Campus 同款感測器),用同一個 Google Drive 資料夾裡官方標示「適合測迴環偵測」的 `garden_dataset.bag`(362.5 秒,~460m,單一小迴圈)交叉驗證。這次意外重現了 Cartographer 的失敗——但這次是**直接硬崩潰**,而不是靜默發散,第一次抓到完整的錯誤堆疊,把根因追到原始碼層級。詳見 [CARTOGRAPHER_FAILURE.md](CARTOGRAPHER_FAILURE.md)。
+
+| 系統 | 狀態 | 端到端誤差(全長 ~460m) | 備註 |
+|---|---|---|---|
+| Cartographer 3D | ❌ 崩潰 | — | t≈27s,一個真實的急轉彎(加速度計幅值飆到 11+ m/s²)讓 `imu_tracker.cc:68` 的重力對齊斷言失敗,程序直接 `abort()` |
+| RTAB-Map(純 ICP) | ❌ 失去追蹤 | — | 同一個急轉彎讓 ICP 註冊持續失敗(`libpointmatcher`:平移量超出 2m 限制),`icp_odometry` 從此永久回報「追蹤丟失」,整段 362 秒只留下 1 個關鍵幀 |
+| LIO-SAM | ✅ 成功 | **0.059m** | 完整跑完全程(1748 個姿態),幾乎完美閉合 |
+| FAST-LIO2 | ✅ 成功 | **0.021m** | 沒有迴環偵測,純里程計在這段 460m 的路徑上飄了 2.1cm,比 LIO-SAM 還準 |
+
+**這次最乾淨的發現**:同一個真實世界的急轉彎事件,用兩種完全不同的機制讓 Cartographer 跟 RTAB-Map 雙雙失效(前者硬崩潰、後者永久丟失追蹤),而 LIO-SAM 跟 FAST-LIO2 完全沒受影響,端到端誤差都在 6 公分以內——四套系統對劇烈運動的容錯能力,取決於各自完全不同的架構假設,不是任何單一參數能調出來的差異。過程中也發現並修好了一個資料轉檔的既有 bug:LIO-SAM 系列官方 demo bag 的 PointCloud2 訊息 `row_step` 欄位原始就是 0(Velodyne driver 的既有 quirk),`rosbags-convert` 會原樣帶過去,RTAB-Map 的 `icp_odometry` 會對這個欄位做斷言檢查而中止——`fix_pointcloud_rowstep.py` 重新計算並修正這個欄位即可解決。
+
+![garden_dataset 四套系統比較圖(Cartographer 崩潰、RTAB-Map 只有 1 個關鍵幀、LIO-SAM/FAST-LIO2 完整跑完)](docs/images/garden/comparison_map_grid_garden.png)
+
 ## 目錄結構
 
 - `DATASETS.md` — 各資料集的特性、格式差異、四套系統移植細節
 - `outputs/comparison_report.md` — Campus 資料集的完整分析報告
-- `docs/images/` — 靜態地圖渲染圖(campus/、mid360/、mid360_kidnap/、tiers_cut0/、tiers_cut1/、tiers_indoor1/、tiers_indoor2/)
+- `docs/images/` — 靜態地圖渲染圖(campus/、mid360/、mid360_kidnap/、tiers_cut0/、tiers_cut1/、tiers_indoor1/、tiers_indoor2/、garden/)
+- `CARTOGRAPHER_FAILURE.md` — Cartographer 3D 發散/崩潰根因的原始碼層級調查
 - `slam_comparison/scripts/` — 所有前處理、匯出、渲染、評估腳本
 - `slam_comparison/config/`、`slam_comparison/launch/` — 各系統的設定檔跟 launch file

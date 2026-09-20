@@ -1,6 +1,6 @@
 # 資料集特性說明
 
-本專案用兩種感測器(VLP-16、Livox Mid360)、三個獨立資料集來源(LIO-SAM 官方、Zenodo、TIERS)、共 7 段序列測試同一組四套 SLAM 系統(Cartographer 3D、RTAB-Map、LIO-SAM、FAST-LIO2),目的是看同一套系統在不同 LiDAR 掃描模式、不同軌跡結構、不同資料集來源下的表現差異。
+本專案用兩種感測器(VLP-16、Livox Mid360)、三個獨立資料集來源(LIO-SAM 官方、Zenodo、TIERS)、共 8 段序列測試同一組四套 SLAM 系統(Cartographer 3D、RTAB-Map、LIO-SAM、FAST-LIO2),目的是看同一套系統在不同 LiDAR 掃描模式、不同軌跡結構、不同資料集來源下的表現差異。
 
 ## 1. Campus(LIO-SAM 官方資料集)
 
@@ -100,3 +100,39 @@ Campus 資料集的評估方法(終點誤差)有兩個先天限制:①只看頭�
 **發現二:室內場景的 ATE 明顯優於戶外(4~5cm vs 8~22cm)**,三套存活系統在兩段室內資料都壓在 5cm 以內,是所有 Mid360 測試裡最好的成績,原因很直觀——辦公室內牆面、家具提供的幾何特徵遠比開放道路密集,ICP/scan-matching 更容易收斂。
 
 **發現三:LIO-SAM 在 `OutdoorRoad_cut1` 上明顯落後(3.688m vs 其他三段資料的 0.030~0.101m)**,但軌跡是完整的(全程 223 個姿態,不是像 Zenodo hard 序列那樣中途發散或凍結)——是「跑完全程但精度差」,不是「提早失敗」。这段資料本身最短(45.3s)、路徑也最短(48.3m),推測跟這個社群 fork 的因子圖優化在資料量不足時収斂較差有關,但另外三段(包含更短的室內資料)並沒有出現同樣的問題,確切原因還沒有進一步鎖定,列為觀察到的現象而非確定的結論。
+
+## 5. garden_dataset(LIO-SAM 官方 demo bag,同一個 Google Drive 資料夾,VLP-16)
+
+回到 VLP-16(跟 Campus 同款感測器、同一個 Google Drive 資料夾),用官方標示「適合測迴環偵測」的 `garden_dataset.bag` 交叉驗證。
+
+| 項目 | 內容 |
+|---|---|
+| LiDAR / IMU | Velodyne VLP-16 + MicroStrain 3DM-GX5-25(跟 Campus 完全相同的錄製流程) |
+| 幀數 / 時長 | 3,595 幀點雲、362.5 秒 |
+| 路徑長度 | ~460m,單一小迴圈 |
+| Ground truth | 無(跟 Campus 一樣,只能用端到端誤差評估) |
+
+### 意外重現 Cartographer 的失敗,但這次是硬崩潰,不是靜默發散
+
+這是這次調查裡最重要的意外收穫。Cartographer 在這份 VLP-16 資料集上直接 `abort()`,留下完整的錯誤堆疊:
+
+```
+F imu_tracker.cc:68] Check failed: (orientation_ * gravity_vector_).normalized().z() > 0.99 (0 vs. 0.99)
+```
+
+崩潰時間點(t≈27s)剛好對應 `/imu_correct` 讀數顯示的一次真實急轉彎(加速度計幅值飆到 11+ m/s²,角速度 0.5 rad/s)。用 `apt-get source ros-jazzy-cartographer` 抓官方原始碼追出完整機制,並發現 RTAB-Map 的 `icp_odometry` 在同一個事件上也失去了追蹤(ICP 註冊持續失敗,`publish_null_when_lost` 之後永久回報空姿態,整段 362 秒只留下 1 個關鍵幀)——完整分析見 [CARTOGRAPHER_FAILURE.md](../CARTOGRAPHER_FAILURE.md)。
+
+### 意外發現的第二個轉檔 bug:PointCloud2 的 `row_step` 欄位
+
+LIO-SAM 官方 demo bag(Campus、garden 都是同一套錄製流程)的 `/points_raw` 訊息,`row_step` 欄位原始就是 0(Velodyne driver 的既有 quirk,`data.size() == width * point_step` 才是正確的欄位),`rosbags-convert` 轉檔時會原樣帶過去。Cartographer 不驗證這個欄位,可以正常運作;但 RTAB-Map 的 `icp_odometry` 有一個 `CHECK` 會驗證 `data.size() == row_step * height`,不通過就直接中止程序。修法(`fix_pointcloud_rowstep.py`)是重新計算 `row_step = width * point_step` 寫回訊息即可,這個腳本在專案更早期處理 Campus 時就已經寫好,只是這次處理 garden 時忘記套用,才第一次真正在錯誤訊息裡看到完整的崩潰過程。
+
+### 四套系統跑測結果
+
+| 系統 | 狀態 | 端到端誤差(全長 ~460m) |
+|---|---|---|
+| Cartographer 3D | ❌ 崩潰 | — |
+| RTAB-Map(純 ICP) | ❌ 失去追蹤 | — |
+| LIO-SAM | ✅ 成功,完整跑完 1748 個姿態 | **0.059m** |
+| FAST-LIO2 | ✅ 成功,完整跑完 359 個姿態,無迴環偵測 | **0.021m** |
+
+同一個真實世界的急轉彎事件,用兩種完全不同的機制讓 Cartographer 跟 RTAB-Map 雙雙失效,LIO-SAM 跟 FAST-LIO2 完全沒受影響——再次證明四套系統對劇烈運動的容錯能力,取決於各自完全不同的架構假設(GTSAM 因子圖 + IMU 預積分 vs. ESKF 緊耦合 vs. 依賴加速度計當重力基準的姿態外推器 vs. 沒有重定位機制的 frame-to-model ICP),不是任何單一參數能調出來的差異。

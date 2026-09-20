@@ -71,6 +71,18 @@ void PoseExtrapolator::AdvanceImuTracker(const common::Time time,
 
 這也解釋了為什麼調 `imu_gravity_time_constant` 兩個方向都沒用:這個參數只控制指數移動平均的**平滑速度**,並不會修正「劇烈運動時,加速度計讀數本來就不該直接當重力向量用」這個根本的建模假設缺陷。調小讓平滑跟不上真實運動的變化速度;調大則讓一次被拖偏的估計值花更久才能被真實重力訊號洗回來——兩個方向都只是在同一個脆弱機制裡調整暴露的時間點跟嚴重程度,無法根治。
 
+## 交叉驗證:同一個急轉彎,也讓 RTAB-Map 永久失去追蹤
+
+同一次 `garden_dataset` 測試裡,RTAB-Map(純 ICP,`icp_odometry`)在完全獨立的機制下,對同一個事件做出了不同但同樣是失敗的反應。log 顯示:
+
+```
+OdometryF2M.cpp:622::computeTransform() Registration failed: "libpointmatcher has failed: limit out of bounds: rot: 0.291957/0.78 tr: 2.70239/2"
+```
+
+在 t≈15-27s 這段窗口,ICP 註冊持續失敗(旋轉/平移量超出 `Icp/MaxTranslation=2` 的限制),`icp_odometry` 從此進入「追蹤丟失」狀態,`publish_null_when_lost=true` 讓它從那之後只發布空的姿態,RTAB-Map 的 SLAM 節點因此整段 362 秒的錄製只收到 1 個有效關鍵幀(`WM=1` 到結束都沒變),之後每一幀點雲都被記錄成「no odometry is provided, Image 0 is ignored」。
+
+這代表**同一個真實世界的急轉彎事件,分別以兩種完全不同的機制,讓兩套架構迥異的系統雙雙失效**:Cartographer 的 IMU 重力假設被打破後觸發硬斷言崩潰;RTAB-Map 的 frame-to-model ICP 找不到合理的配準解後永久丟失追蹤、沒有重定位機制挽回。LIO-SAM(GTSAM 因子圖 + IMU 預積分)跟 FAST-LIO2(ESKF 緊耦合)在同一段資料上完全沒有受影響,端到端誤差都在 6 公分以內——再次印證這四套系統對「劇烈運動」的容錯能力,取決於各自完全不同的架構假設,不是任何單一參數能調出來的差異。
+
 ## 結論
 
 這是 Cartographer 3D(至少到 2.0.9004 這個版本)IMU 初始化/重力追蹤邏輯本身的限制,不是我們的設定或參數問題:它的重力估計機制假設感測器大部分時間接近靜止或勻速,一旦平臺出現真實的劇烈加速度或轉彎,就沒有任何容錯機制——輕則靜默發散,重則直接斷言崩潰。四套系統裡,LIO-SAM、FAST-LIO2、RTAB-Map 都用不同方式(GTSAM 因子圖的 IMU 預積分、ESKF、純幾何 ICP)處理 IMU 訊號,沒有這種對加速度計讀數的強假設,因此在同樣的劇烈運動場景下都不會發散。

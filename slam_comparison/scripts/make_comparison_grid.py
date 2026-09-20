@@ -63,6 +63,14 @@ TILE_SETS = {
         ('LIO-SAM', 'outputs/liosam_tiers_indoor2_map.png', None),
         ('FAST-LIO2', 'outputs/fastlio_tiers_indoor2_map.png', None),
     ],
+    'garden': [
+        ('Cartographer 3D', 'outputs/cartographer_garden_map.png',
+         'FAILURE\nhard crash (SIGABRT) at t=27s:\nimu_tracker.cc gravity CHECK failed\nduring a real sharp turn\nsee CARTOGRAPHER_FAILURE.md'),
+        ('RTAB-Map (pure ICP)', 'outputs/rtabmap_garden_map.png',
+         'FAILURE\nICP lost tracking ~15s in\n(same sharp turn), never recovered\n-- only 1 keyframe for the whole run'),
+        ('LIO-SAM', 'outputs/liosam_garden_map.png', None),
+        ('FAST-LIO2', 'outputs/fastlio_garden_map.png', None),
+    ],
 }
 DEFAULT_TILES = TILE_SETS['campus']
 
