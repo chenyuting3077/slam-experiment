@@ -1,16 +1,16 @@
 # SLAM 系統比較實驗
 
-用四套 SLAM 系統(Cartographer 3D、RTAB-Map、LIO-SAM、FAST-LIO2)在多份不同感測器、不同來源、不同性質的資料集上跑,比較精度跟強健性。各資料集的細節、格式差異、跟四套系統各自的移植過程,見 [DATASETS.md](DATASETS.md)。
+用五套 SLAM 系統(Cartographer 3D、RTAB-Map、LIO-SAM、FAST-LIO2、FAST_LIO_SAM)在多份不同感測器、不同來源、不同性質的資料集上跑,比較精度跟強健性。各資料集的細節、格式差異、跟各套系統的移植過程,見 [DATASETS.md](DATASETS.md)。
 
 ## 資料集一:Campus(LIO-SAM 官方資料集,Velodyne VLP-16)
 
 閉環路徑,1437m,用「終點誤差」(首尾姿態距離)對照論文數字。
 
-| 指標 | LOAM(論文) | LIO-odom(論文) | LIO-GPS(論文) | LIO-SAM(論文) | **Cartographer 3D** | **RTAB-Map** | **LIO-SAM** | **FAST-LIO2** |
-|---|---|---|---|---|---|---|---|---|
-| End-to-end translation error (m) | 192.43 | 9.44 | 6.87 | 0.12 | 31.67 | 163.67 | 0.288 | 9.575 |
+| 指標 | LOAM(論文) | LIO-odom(論文) | LIO-GPS(論文) | LIO-SAM(論文) | **Cartographer 3D** | **RTAB-Map** | **LIO-SAM** | **FAST-LIO2** | **FAST_LIO_SAM** |
+|---|---|---|---|---|---|---|---|---|---|
+| End-to-end translation error (m) | 192.43 | 9.44 | 6.87 | 0.12 | 31.67 | 163.67 | 0.288 | 9.575 | 10.034 |
 
-詳細分析、迴環偵測除錯過程、為什麼緊耦合系統明顯領先,見 [outputs/comparison_report.md](outputs/comparison_report.md)。
+詳細分析、迴環偵測除錯過程、為什麼緊耦合系統明顯領先,見 [outputs/comparison_report.md](outputs/comparison_report.md)。第 5 套系統 `FAST_LIO_SAM`(社群 fork,FAST-LIO2 前端 + LIO-SAM 風格 GTSAM 迴環後端)的加入過程跟意外插曲(一個真的原始碼 bug、一個純粹測錯資料集的自己犯的錯),見 [FAST_LIO_SAM_NOTES.md](FAST_LIO_SAM_NOTES.md)。
 
 ![Campus 四套系統比較圖](docs/images/campus/comparison_map_grid.png)
 
