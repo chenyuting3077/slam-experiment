@@ -34,9 +34,10 @@ def parse_pcd_header(f):
         elif line.startswith('POINTS'):
             npoints = int(line.split()[1])
         elif line.startswith('DATA'):
-            assert 'binary' in line
+            assert 'binary' in line or 'ascii' in line
+            ascii_data = 'ascii' in line
             break
-    return fields, sizes, types, npoints
+    return fields, sizes, types, npoints, ascii_data
 
 
 TYPE_MAP = {('F', 4): 'f', ('F', 8): 'd', ('I', 4): 'i', ('U', 4): 'I'}
@@ -44,15 +45,18 @@ TYPE_MAP = {('F', 4): 'f', ('F', 8): 'd', ('I', 4): 'i', ('U', 4): 'I'}
 
 def main(pcd_path: str, out_path: str) -> None:
     with open(pcd_path, 'rb') as f:
-        fields, sizes, types, npoints = parse_pcd_header(f)
-        fmt = '<' + ''.join(TYPE_MAP[(t, s)] for t, s in zip(types, sizes))
-        point_step = struct.calcsize(fmt)
-        data = f.read(point_step * npoints)
+        fields, sizes, types, npoints, ascii_data = parse_pcd_header(f)
+        if ascii_data:
+            rows = [[float(v) for v in ln.split()] for ln in f.read().decode().splitlines() if ln.strip()]
+        else:
+            fmt = '<' + ''.join(TYPE_MAP[(t, s)] for t, s in zip(types, sizes))
+            point_step = struct.calcsize(fmt)
+            data = f.read(point_step * npoints)
 
     idx = {name: i for i, name in enumerate(fields)}
     with open(out_path, 'w') as out:
         for i in range(npoints):
-            vals = struct.unpack_from(fmt, data, i * point_step)
+            vals = rows[i] if ascii_data else struct.unpack_from(fmt, data, i * point_step)
             x, y, z = vals[idx['x']], vals[idx['y']], vals[idx['z']]
             roll, pitch, yaw = vals[idx['roll']], vals[idx['pitch']], vals[idx['yaw']]
             t = vals[idx['time']]

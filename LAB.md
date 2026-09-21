@@ -43,3 +43,45 @@
 **這次驗證了兩件事**:①`spot_cartographer` 在這份閉環資料上表現得比另外兩套成功的系統好上兩個數量級(2.64cm vs. 1.1~1.25m)——差異主要來自迴環偵測(Cartographer 的 pose graph 優化 + 真的偵測到 282 個約束),FAST-LIO2 完全沒有迴環機制,RTAB-Map 雖然理論上有,但這次頭尾誤差跟 FAST-LIO2 同一個量級,沒有明顯發揮迴環優勢;②LIO-SAM 在同一顆感測器上第二次發散,而且路徑越長、複雜度越高,崩潰得越早越徹底,證實資料集一的診斷(4 線光達撐不住 LOAM 特徵擷取)是穩定重現、不是單次意外。
 
 ![Compal AMR rosbag2_mapping_dataset_2026_09_21 四套系統比較圖(Cartographer 頭尾誤差 2.64cm 最準,RTAB-Map/FAST-LIO2 約 1.1~1.25m,LIO-SAM 完全發散)](docs/images/compal_amr/comparison_map_grid_compal_amr_2026_09_21.png)
+
+## 資料集三:rosbag2_2026_09_21-07_28_09_no_camera(809 秒、單向約 172m 的長直線來回,四套系統改用官方版本)
+
+同一台 Compal AMR,錄了 13.5 分鐘,沿一條約 172m 的長直線往返(折返點約在 396 秒)。只用 `/vanjee_points719e_merged`(4 線)、`/imu/data`(約 66Hz)、`/odometry`、`/tf_static`;bag 裡的 Livox(`/livox/lidar`、`/livox/imu`)這次沒跑。**沒有 ground truth**,所以下表的 ATE 是對照 `/odometry`(輪式/融合里程計)算的,而 `/odometry` 本身會漂(首尾相距 9.33m,路徑 426.39m),它只是參考,不是真值。
+
+**這次跟資料集一、二的差別**:四套系統都改成官方版本——Cartographer 用 apt 官方套件加 `spot_cartographer` 的 `spot_offline_mapping.lua`、RTAB-Map 用 apt 官方套件(以 `/odometry` 為骨幹、`Reg/Force3DoF=true`)、FAST-LIO2 用 `hku-mars/FAST_LIO` 未修改原始碼、LIO-SAM 用官方 `TixiaoShan/LIO-SAM` 的 `ros2` 分支(commit `08af3f3`;只加一個編譯用 patch,把 `find_package(Eigen)` 改成 `Eigen3`,見 `slam_comparison/docker/lio_sam_official_build_fix.patch`)。資料集一、二的 LIO-SAM 用的是社群 port `pixwyh/LIO-SAM-ROS2`,不是同一份程式碼。工具鏈打包成三個 docker 映像(`slam_comparison/docker/`),四套系統在同一台機器上平行跑;RTAB-Map、FAST-LIO2、LIO-SAM 是即時播放(1x),Cartographer 是離線處理。
+
+### 全段(809.1 秒)
+
+| 系統 | 狀態 | 首尾距離 | 路徑長度 | 姿態數 | ATE vs `/odometry` | 備註 |
+|---|---|---|---|---|---|---|
+| Cartographer 3D | ✅ 成功 | **0.044m** | 443.95m | 9600 | 2.94m(最大 5.80m) | 14157 次約束計算裡有 767 個成為新約束,沒有崩潰或斷言。z 範圍 [-1.48, 1.29]m |
+| RTAB-Map | ✅ 成功(尾端有一小段異常) | **0.015m** | 469.79m | 556 | 3.10m(最大 23.6m) | 資料庫 634 個節點,1486 條局部空間鄰近連結,沒有全域迴環(沒有影像),6 次迴環被判定為錯誤而拒絕。優化後的位姿裡,t≈798 秒附近少數幾個節點跳離約 22m(最大誤差來源),其餘正常。z 被 `Force3DoF` 鎖在 0 |
+| FAST-LIO2(官方) | ❌ 發散 | 2318m | 4543m | 16135 | 196.3m(最大 2254m) | 誤差在 213 秒超過 5m、386 秒超過 50m,終點 z=-2053m;log 有 148 次 `No Effective Points!` |
+| LIO-SAM(官方) | ❌ 發散 | — | 244,576m | 681 個關鍵幀 | — | 475 次 `Large velocity, reset IMU-preintegration!`,z 被夾在預設的 ±1000m 上限(`z_tollerance`) |
+
+**能確定的事**:
+- Cartographer 和 RTAB-Map 兩套獨立系統都把路徑閉合到公分等級(4.4cm、1.5cm),而 `/odometry` 首尾相距 9.33m,所以這條路徑應該是回到起點的閉環(這是推論,沒有人工確認)。兩者的軌跡彼此吻合:對齊後中位數相差 1.17m、95 百分位 2.0m(不含上面那個 22m 的尖點)。
+- FAST-LIO2 在前 3 分鐘還跟參考吻合(ATE 0.16m),之後誤差從約 2 分鐘起持續放大,到折返點附近(396 秒)已超過 50m,終點離起點 2318m。LIO-SAM 全程無法使用。
+
+**不能下的結論**:
+- 沒有 ground truth,不能說 Cartographer 比 RTAB-Map「更準」。往返兩趟的橫向間距(回程到去程路徑的最近距離,離起點 20m 以外)是:`/odometry` 平均 1.97m,Cartographer 3.45m,RTAB-Map 3.53m——兩套 SLAM 並沒有比原始里程計更「重疊」,但回程本來就可能走不同車道,所以這個數字也不能當作誤差。
+- FAST-LIO2 為什麼發散,我沒有驗證。前 396 秒都是筆直的長路徑,誤差隨距離持續增加,跟 LegKilo `corridor.bag` 上觀察到的「長走廊幾何退化」模式相符,但這只是推測。
+- LIO-SAM 的失敗跟資料集一、二同一類(這顆光達只有 4 條線,LOAM 風格特徵擷取先天不足);這次用官方版本,一樣失敗,而且更早——3 分鐘試跑裡第 2 個關鍵幀起 z 每幀掉 1~2m。
+
+![軌跡對照:Cartographer 與 RTAB-Map 都閉合了路徑,FAST-LIO2 誤差隨時間發散](docs/images/compal_amr/trajectory_compare_compal_amr_full.png)
+
+### 先跑的 3 分鐘試通(前 180 秒、3596 幀)
+
+| 系統 | 結果(ATE 對照 `/odometry`) |
+|---|---|
+| Cartographer 3D | 0.237m,路徑 56.24m(`/odometry` 為 53.94m) |
+| RTAB-Map | 0.128m,路徑 53.85m |
+| FAST-LIO2(官方) | 0.164m;xy 吻合,但 z 持續上升到 3.46m |
+| LIO-SAM(官方) | 發散(路徑 8315m,終點離起點 1149m) |
+
+### 這次踩到的東西
+
+- **RTAB-Map 匯出**:`export_rtabmap_trajectory.py` 讀的是資料庫 `Node.pose`,那是**未優化的里程計位姿**(這次全程跟 `/odometry` 相差 0.00m),不是迴環優化後的結果。這份資料改用 `rtabmap-export --poses --opt 0` 匯出優化後位姿。
+- **FAST-LIO 外參符號**:`extrinsic_T` 是「光達在 IMU 座標系的位置」,所以要填 `base_link→imu_link` 平移量的**負值**(-0.1266, 0, -0.077)。資料集二的設定檔填的是正值。我在 3 分鐘資料上兩種符號都跑過,結果差異可忽略(ATE 0.164m vs 0.155m,z 上飄同樣約 3.5m),所以 z 上飄不是符號造成的。
+- **LIO-SAM 官方版**:輸出的 `transformations.pcd` 是 ASCII 格式,`export_liosam_trajectory.py` 已補上支援;關鍵幀時間戳因為精度被截斷,不能用來做時間對齊。官方版一樣會噴 `TF_NO_FRAME_ID`(不影響 `mapOptimization` 的輸出)。
+- 重跑方式:`bash slam_comparison/docker/run_lab_all.sh <切好的 bag> <標籤>`;原始資料、轉檔、映像備份都在 `data/`,輸出在 `outputs/compal_amr_<標籤>_*`(兩者都不在 git 裡)。
