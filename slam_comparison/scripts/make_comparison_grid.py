@@ -12,7 +12,7 @@ Usage:
 import argparse
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 TILE_SETS = {
     'campus': [
@@ -102,11 +102,17 @@ TILE_SETS = {
         ('FAST-LIO2 (official)', 'outputs/compal_amr_fastlio2/fastlio2_compal_amr_map.png', None),
         ('LIO-SAM (diverges after ~17/30 keyframes)', 'outputs/compal_amr_liosam/liosam_compal_amr_map.png', None),
     ],
+    'compal_amr_full': [
+        ('Cartographer 3D (end-to-end 4.4cm)', 'docs/images/compal_amr/full_809s_individual/cartographer_compal_amr_full_map.png', None),
+        ('RTAB-Map (end-to-end 1.5cm)', 'docs/images/compal_amr/full_809s_individual/rtabmap_compal_amr_full_map.png', None),
+        ('FAST-LIO2 (diverges from ~200 s)', 'docs/images/compal_amr/full_809s_individual/fastlio2_compal_amr_full_map.png', None),
+        ('LIO-SAM (diverges from the start)', 'docs/images/compal_amr/full_809s_individual/liosam_compal_amr_full_map.png', None),
+    ],
     'compal_amr_2026_09_21': [
-        ('Cartographer 3D (end-to-end 2.64cm)', 'outputs/compal_amr_cartographer_2026_09_21/cartographer_compal_amr_2026_09_21_map.png', None),
-        ('RTAB-Map (end-to-end 1.25m)', 'outputs/compal_amr_rtabmap_2026_09_21/rtabmap_compal_amr_2026_09_21_map.png', None),
-        ('FAST-LIO2 (end-to-end 1.10m)', 'outputs/compal_amr_fastlio2_2026_09_21/fastlio2_compal_amr_2026_09_21_map.png', None),
-        ('LIO-SAM (diverges from ~keyframe 8/106)', 'outputs/compal_amr_liosam_2026_09_21/liosam_compal_amr_2026_09_21_map.png', None),
+        ('Cartographer 3D (end-to-end 2.64cm)', 'docs/images/compal_amr/2026_09_21_individual/cartographer_compal_amr_2026_09_21_map.png', None),
+        ('RTAB-Map (end-to-end 1.25m)', 'docs/images/compal_amr/2026_09_21_individual/rtabmap_compal_amr_2026_09_21_map.png', None),
+        ('FAST-LIO2 (end-to-end 1.10m)', 'docs/images/compal_amr/2026_09_21_individual/fastlio2_compal_amr_2026_09_21_map.png', None),
+        ('LIO-SAM (diverges from ~keyframe 8/106)', 'docs/images/compal_amr/2026_09_21_individual/liosam_compal_amr_2026_09_21_map.png', None),
     ],
 }
 DEFAULT_TILES = TILE_SETS['campus']
@@ -143,27 +149,28 @@ def main():
     entries = TILE_SETS[args.set]
     out_path = args.out or f'/home/allen/slam-experiment/outputs/comparison_map_grid_{args.set}.png'
 
-    # Reference size from the first tile that actually exists.
-    ref_size = None
-    for _, path, _ in entries:
-        if Path(path).exists():
-            ref_size = Image.open(path).size
-            break
-    if ref_size is None:
+    # Tile size = largest existing tile; smaller ones are centered on black.
+    sizes = [Image.open(path).size for _, path, _ in entries if Path(path).exists()]
+    if not sizes:
         raise SystemExit("No tile images exist -- nothing to build a grid from.")
+    ref_size = (max(w for w, _ in sizes), max(h for _, h in sizes))
+    tile_w_ref = ref_size[0]
 
     tiles = []
     for label, path, reason in entries:
         if reason is not None or not Path(path).exists():
             img = failure_tile(ref_size, reason or 'FAILURE\n(no map produced)')
         else:
-            img = Image.open(path).convert('RGB')
+            img = ImageOps.pad(Image.open(path).convert('RGB'), (tile_w_ref, Image.open(path).size[1]), color=(0, 0, 0))
         tiles.append((label, img))
 
-    tile_w, tile_h = ref_size
+    tile_w = ref_size[0]
     label_h = args.label_height
     num_rows = (len(tiles) + 1) // 2
-    grid_w, grid_h = tile_w * 2, (tile_h + label_h) * num_rows
+    # Each row is as tall as its tallest tile (tiles are centered on black in their cell).
+    row_h = [max(t[1].size[1] for t in tiles[r * 2:r * 2 + 2]) for r in range(num_rows)]
+    row_y = [sum(row_h[:r]) + label_h * r for r in range(num_rows)]
+    grid_w, grid_h = tile_w * 2, sum(row_h) + label_h * num_rows
 
     grid = Image.new('RGB', (grid_w, grid_h), (0, 0, 0))
     draw = ImageDraw.Draw(grid)
@@ -174,12 +181,12 @@ def main():
 
     for i, (label, img) in enumerate(tiles):
         col, row = i % 2, i // 2
-        x, y = col * tile_w, row * (tile_h + label_h)
+        x, y = col * tile_w, row_y[row]
         draw.rectangle([x, y, x + tile_w, y + label_h], fill=(30, 30, 30))
         text_w = draw.textlength(label, font=font)
         draw.text((x + (tile_w - text_w) / 2, y + (label_h - 28) / 2), label,
                    fill=(255, 255, 255), font=font)
-        grid.paste(img, (x, y + label_h))
+        grid.paste(img, (x, y + label_h + (row_h[row] - img.size[1]) // 2))
 
     grid.save(out_path)
     print(f"Saved {out_path}")

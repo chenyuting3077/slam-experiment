@@ -70,6 +70,10 @@
 
 ![軌跡對照:Cartographer 與 RTAB-Map 都閉合了路徑,FAST-LIO2 誤差隨時間發散](docs/images/compal_amr/trajectory_compare_compal_amr_full.png)
 
+![全段點雲地圖與軌跡四宮格(俯視、依離地高度上色、白線為軌跡;各格比例尺不同)](docs/images/compal_amr/comparison_map_grid_compal_amr_full.png)
+
+讀圖注意:顏色是**離地高度**,配色跟其他資料集的圖一樣(紅=低、藍=高),但四格用同一條固定色帶(-0.5m 到 3.5m,超出範圍的夾在兩端顏色),其他資料集的圖則是各自拉伸,所以同色代表同高度。離地高度是用各系統軌跡起點的 z 加上該座標系離地的高度換算的(假設起點附近地面是平的;`tf_static` 裡 `base_footprint→base_link` 是 0.1457m,Cartographer 與 FAST-LIO2 追蹤的是 `imu_link`,再高 0.077m,共 0.2227m)。發散的兩格(FAST-LIO2、LIO-SAM)大部分點的高度早已飄出色帶,會被夾成同一個顏色,只有起點附近保有正常的顏色。RTAB-Map 開了 `Force3DoF`,位姿是水平的,所以車身傾斜造成的高度差沒有被補償,跟 Cartographer 的 6 自由度結果在細節上會不一樣。每一格的比例尺不同(左下角的白色線段,分別是 10m、10m、100m、1000m),俯視方向已旋轉成軌跡主軸水平,方形標記是終點、圓點是起點。點雲來源也不同:Cartographer 是 `cartographer_assets_writer` 輸出(有移除移動物體的濾波,隨機取 400 萬點繪圖);RTAB-Map 的 `rtabmap-export` 匯出 0 個點,所以是用優化後的節點位姿加上對應的原始掃描自己組出來的(體素 0.1m,`assemble_rtabmap_cloud.py`);FAST-LIO2 是它存下的整張累積地圖(隨機取 400 萬點);LIO-SAM 是 `cloudGlobal.pcd`。RTAB-Map 那格右端往外延伸的白線,就是上面提到尾端約 22m 的尖點。
+
 ### 先跑的 3 分鐘試通(前 180 秒、3596 幀)
 
 | 系統 | 結果(ATE 對照 `/odometry`) |
