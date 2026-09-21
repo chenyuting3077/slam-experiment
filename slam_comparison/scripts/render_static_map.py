@@ -45,7 +45,15 @@ def main():
                      help='draw the trajectory tube flat at (point-cloud z-max + this margin) '
                           'instead of its real height, so it never ends up underneath/behind '
                           'point-cloud structure from the top-down view. Only affects the '
-                          'tube\'s drawn Z, not the real pose.')
+                          'tube\'s drawn Z, not the real pose. Ignored if --traj-real-height is set.')
+    ap.add_argument('--traj-real-height', action='store_true',
+                     help='draw the trajectory tube at each pose\'s own real z instead of '
+                          'flattening it to a lifted plane. Under the perspective camera used '
+                          'here, a lifted tube shows real parallax displacement relative to the '
+                          'point cloud beneath it -- negligible at large (building/campus) scale '
+                          'but visible at room scale. Use this for small-scale maps where exact '
+                          'XY alignment between the tube and the cloud matters more than always '
+                          'seeing the tube on top.')
     args = ap.parse_args()
 
     label = Path(args.trajectory).stem
@@ -80,13 +88,18 @@ def main():
     render_cloud.points = o3d.utility.Vector3dVector(pts)
     render_cloud.colors = o3d.utility.Vector3dVector(colors)
 
-    traj_lift_z = float(pts[:, 2].max()) + args.traj_lift_margin if len(pts) else 0.0
-    print(f"[{label}] Drawing trajectory tube flat at z={traj_lift_z:.2f} "
-          f"({len(trans)} poses) so it stays on top of the cloud...")
+    if args.traj_real_height:
+        print(f"[{label}] Drawing trajectory tube at each pose's real z "
+              f"({len(trans)} poses)...")
+    else:
+        traj_lift_z = float(pts[:, 2].max()) + args.traj_lift_margin if len(pts) else 0.0
+        print(f"[{label}] Drawing trajectory tube flat at z={traj_lift_z:.2f} "
+              f"({len(trans)} poses) so it stays on top of the cloud...")
     traj_mesh = o3d.geometry.TriangleMesh()
     last = None
     for p in trans:
-        p_flat = np.array([p[0], p[1], traj_lift_z])
+        p_flat = np.array([p[0], p[1], p[2]]) if args.traj_real_height \
+            else np.array([p[0], p[1], traj_lift_z])
         if last is None:
             last = p_flat
             continue

@@ -96,6 +96,18 @@ TILE_SETS = {
         ('FAST_LIO_SAM', 'outputs/fastlio_sam_legkilo_corridor_map.png',
          'FAILURE\nATE 61062m -- same front-end\ndegeneracy as FAST-LIO2, made\ncatastrophically worse by the backend'),
     ],
+    'compal_amr': [
+        ('Cartographer 3D', 'outputs/compal_amr_cartographer/cartographer_compal_amr_map.png', None),
+        ('RTAB-Map (external odom)', 'outputs/compal_amr_rtabmap/rtabmap_compal_amr_map.png', None),
+        ('FAST-LIO2 (official)', 'outputs/compal_amr_fastlio2/fastlio2_compal_amr_map.png', None),
+        ('LIO-SAM (diverges after ~17/30 keyframes)', 'outputs/compal_amr_liosam/liosam_compal_amr_map.png', None),
+    ],
+    'compal_amr_2026_09_21': [
+        ('Cartographer 3D (end-to-end 2.64cm)', 'outputs/compal_amr_cartographer_2026_09_21/cartographer_compal_amr_2026_09_21_map.png', None),
+        ('RTAB-Map (end-to-end 1.25m)', 'outputs/compal_amr_rtabmap_2026_09_21/rtabmap_compal_amr_2026_09_21_map.png', None),
+        ('FAST-LIO2 (end-to-end 1.10m)', 'outputs/compal_amr_fastlio2_2026_09_21/fastlio2_compal_amr_2026_09_21_map.png', None),
+        ('LIO-SAM (diverges from ~keyframe 8/106)', 'outputs/compal_amr_liosam_2026_09_21/liosam_compal_amr_2026_09_21_map.png', None),
+    ],
 }
 DEFAULT_TILES = TILE_SETS['campus']
 
