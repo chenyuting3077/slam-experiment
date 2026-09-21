@@ -97,16 +97,22 @@ TILE_SETS = {
          'FAILURE\nATE 61062m -- same front-end\ndegeneracy as FAST-LIO2, made\ncatastrophically worse by the backend'),
     ],
     'compal_amr': [
-        ('Cartographer 3D', 'outputs/compal_amr_cartographer/cartographer_compal_amr_map.png', None),
-        ('RTAB-Map (external odom)', 'outputs/compal_amr_rtabmap/rtabmap_compal_amr_map.png', None),
-        ('FAST-LIO2 (official)', 'outputs/compal_amr_fastlio2/fastlio2_compal_amr_map.png', None),
-        ('LIO-SAM (diverges after ~17/30 keyframes)', 'outputs/compal_amr_liosam/liosam_compal_amr_map.png', None),
+        ('Cartographer 3D', 'outputs/compal_amr/dataset1_mapping/cartographer/cartographer_compal_amr_map.png', None),
+        ('RTAB-Map (external odom)', 'outputs/compal_amr/dataset1_mapping/rtabmap/rtabmap_compal_amr_map.png', None),
+        ('FAST-LIO2 (official)', 'outputs/compal_amr/dataset1_mapping/fastlio2/fastlio2_compal_amr_map.png', None),
+        ('LIO-SAM (diverges after ~17/30 keyframes)', 'outputs/compal_amr/dataset1_mapping/liosam/liosam_compal_amr_map.png', None),
     ],
     'compal_amr_full': [
         ('Cartographer 3D (end-to-end 4.4cm)', 'docs/images/compal_amr/full_809s_individual/cartographer_compal_amr_full_map.png', None),
         ('RTAB-Map (end-to-end 1.5cm)', 'docs/images/compal_amr/full_809s_individual/rtabmap_compal_amr_full_map.png', None),
         ('FAST-LIO2 (diverges from ~200 s)', 'docs/images/compal_amr/full_809s_individual/fastlio2_compal_amr_full_map.png', None),
         ('LIO-SAM (diverges from the start)', 'docs/images/compal_amr/full_809s_individual/liosam_compal_amr_full_map.png', None),
+    ],
+    'compal_amr_livox_full': [
+        ('Cartographer 3D (Livox IMU, end-to-end 2.19m)', 'docs/images/compal_amr/livox_full_individual/cartographer_compal_amr_livox_full_map.png', None),
+        ('RTAB-Map (end-to-end 0.19m)', 'docs/images/compal_amr/livox_full_individual/rtabmap_compal_amr_livox_full_map.png', None),
+        ('FAST-LIO2 (end-to-end 2.3cm, plane-leveled)', 'docs/images/compal_amr/livox_full_individual/fastlio2_compal_amr_livox_full_map.png', None),
+        ('LIO-SAM (end-to-end 9.7cm, plane-leveled)', 'docs/images/compal_amr/livox_full_individual/liosam_compal_amr_livox_full_map.png', None),
     ],
     'compal_amr_2026_09_21': [
         ('Cartographer 3D (end-to-end 2.64cm)', 'docs/images/compal_amr/2026_09_21_individual/cartographer_compal_amr_2026_09_21_map.png', None),

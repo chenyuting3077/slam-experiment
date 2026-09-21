@@ -70,12 +70,37 @@ def main():
     ap.add_argument('--z-range', type=float, nargs=2, default=None, metavar=('LO', 'HI'),
                     help='fixed color range (m, above ground when --start-height is set); default is the '
                          "cloud's own 2nd..98th percentile, which is NOT comparable between tiles")
+    ap.add_argument('--level-gravity', type=float, nargs=3, default=None, metavar=('AX', 'AY', 'AZ'),
+                    help='accelerometer reading (any unit) of the sensor at rest in the trajectory/cloud frame; both are '
+                         'rotated so that this direction becomes +z (for frames that are not gravity aligned, e.g. '
+                         'FAST_LIO/LIO-SAM world frames = initial sensor frame)')
+    ap.add_argument('--level-plane', action='store_true',
+                    help="rotate trajectory and cloud so that the trajectory's least-squares plane is horizontal (assumes the "
+                         'robot drove on roughly flat ground); for frames with unknown tilt, e.g. LIO-SAM')
     ap.add_argument('--rotate', type=float, default=0.0, help='extra view rotation in degrees (counter-clockwise)')
     ap.add_argument('--px', type=int, default=1280, help='long side of the raster in pixels')
     args = ap.parse_args()
 
     traj = np.loadtxt(args.trajectory)[:, 1:4]
     pts = read_pcd_xyz(args.cloud, args.max_points)
+    if args.level_gravity is not None:
+        g = np.array(args.level_gravity, float)
+        g /= np.linalg.norm(g)
+        v = np.cross(g, [0, 0, 1.0])
+        c = g[2]
+        vx = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+        Rl = np.eye(3) + vx + vx @ vx / (1 + c)  # Rodrigues: rotates g onto +z
+        traj, pts = traj @ Rl.T, pts @ Rl.T
+
+    if args.level_plane:
+        A = np.c_[traj[:, 0], traj[:, 1], np.ones(len(traj))]
+        a_, b_, _ = np.linalg.lstsq(A, traj[:, 2], rcond=None)[0]
+        n = np.array([-a_, -b_, 1.0])
+        n /= np.linalg.norm(n)
+        v = np.cross(n, [0, 0, 1.0])
+        vx = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+        Rp = np.eye(3) + vx + vx @ vx / (1 + n[2])
+        traj, pts = traj @ Rp.T, pts @ Rp.T
 
     c = traj[:, :2].mean(0)
     _, _, vt = np.linalg.svd(traj[:, :2] - c, full_matrices=False)

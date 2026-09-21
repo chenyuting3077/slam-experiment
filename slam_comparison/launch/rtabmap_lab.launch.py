@@ -40,8 +40,9 @@ def generate_launch_description():
     }
     return LaunchDescription([
         DeclareLaunchArgument('database_path'),
+        DeclareLaunchArgument('scan_topic', default_value='/vanjee_points719e_merged'),
         Node(package='rtabmap_slam', executable='rtabmap', output='screen',
              parameters=[parameters],
-             remappings=[('odom', '/odometry'), ('scan_cloud', '/vanjee_points719e_merged')],
+             remappings=[('odom', '/odometry'), ('scan_cloud', LaunchConfiguration('scan_topic'))],
              arguments=['--delete_db_on_start']),
     ])

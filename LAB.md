@@ -46,7 +46,7 @@
 
 ## 資料集三:rosbag2_2026_09_21-07_28_09_no_camera(809 秒、單向約 172m 的長直線來回,四套系統改用官方版本)
 
-同一台 Compal AMR,錄了 13.5 分鐘,沿一條約 172m 的長直線往返(折返點約在 396 秒)。只用 `/vanjee_points719e_merged`(4 線)、`/imu/data`(約 66Hz)、`/odometry`、`/tf_static`;bag 裡的 Livox(`/livox/lidar`、`/livox/imu`)這次沒跑。**沒有 ground truth**,所以下表的 ATE 是對照 `/odometry`(輪式/融合里程計)算的,而 `/odometry` 本身會漂(首尾相距 9.33m,路徑 426.39m),它只是參考,不是真值。
+同一台 Compal AMR,錄了 13.5 分鐘,沿一條約 172m 的長直線往返(折返點約在 396 秒)。只用 `/vanjee_points719e_merged`(4 線)、`/imu/data`(約 66Hz)、`/odometry`、`/tf_static`;bag 裡的 Livox(`/livox/lidar`、`/livox/imu`)另外跑,見後面「資料集三(續)」。**沒有 ground truth**,所以下表的 ATE 是對照 `/odometry`(輪式/融合里程計)算的,而 `/odometry` 本身會漂(首尾相距 9.33m,路徑 426.39m),它只是參考,不是真值。
 
 **這次跟資料集一、二的差別**:四套系統都改成官方版本——Cartographer 用 apt 官方套件加 `spot_cartographer` 的 `spot_offline_mapping.lua`、RTAB-Map 用 apt 官方套件(以 `/odometry` 為骨幹、`Reg/Force3DoF=true`)、FAST-LIO2 用 `hku-mars/FAST_LIO` 未修改原始碼、LIO-SAM 用官方 `TixiaoShan/LIO-SAM` 的 `ros2` 分支(commit `08af3f3`;只加一個編譯用 patch,把 `find_package(Eigen)` 改成 `Eigen3`,見 `slam_comparison/docker/lio_sam_official_build_fix.patch`)。資料集一、二的 LIO-SAM 用的是社群 port `pixwyh/LIO-SAM-ROS2`,不是同一份程式碼。工具鏈打包成三個 docker 映像(`slam_comparison/docker/`),四套系統在同一台機器上平行跑;RTAB-Map、FAST-LIO2、LIO-SAM 是即時播放(1x),Cartographer 是離線處理。
 
@@ -65,7 +65,7 @@
 
 **不能下的結論**:
 - 沒有 ground truth,不能說 Cartographer 比 RTAB-Map「更準」。往返兩趟的橫向間距(回程到去程路徑的最近距離,離起點 20m 以外)是:`/odometry` 平均 1.97m,Cartographer 3.45m,RTAB-Map 3.53m——兩套 SLAM 並沒有比原始里程計更「重疊」,但回程本來就可能走不同車道,所以這個數字也不能當作誤差。
-- FAST-LIO2 為什麼發散,我沒有驗證。前 396 秒都是筆直的長路徑,誤差隨距離持續增加,跟 LegKilo `corridor.bag` 上觀察到的「長走廊幾何退化」模式相符,但這只是推測。
+- FAST-LIO2 為什麼發散,我沒有驗證。前 396 秒都是筆直的長路徑,誤差隨距離持續增加,跟 LegKilo `corridor.bag` 上觀察到的「長走廊幾何退化」模式相符,但這只是推測,而且後面 Livox 那組在同一條路徑上用同一份官方 FAST_LIO 沒有發散,所以不太像是路徑本身造成的。
 - LIO-SAM 的失敗跟資料集一、二同一類(這顆光達只有 4 條線,LOAM 風格特徵擷取先天不足);這次用官方版本,一樣失敗,而且更早——3 分鐘試跑裡第 2 個關鍵幀起 z 每幀掉 1~2m。
 
 ![軌跡對照:Cartographer 與 RTAB-Map 都閉合了路徑,FAST-LIO2 誤差隨時間發散](docs/images/compal_amr/trajectory_compare_compal_amr_full.png)
@@ -88,4 +88,55 @@
 - **RTAB-Map 匯出**:`export_rtabmap_trajectory.py` 讀的是資料庫 `Node.pose`,那是**未優化的里程計位姿**(這次全程跟 `/odometry` 相差 0.00m),不是迴環優化後的結果。這份資料改用 `rtabmap-export --poses --opt 0` 匯出優化後位姿。
 - **FAST-LIO 外參符號**:`extrinsic_T` 是「光達在 IMU 座標系的位置」,所以要填 `base_link→imu_link` 平移量的**負值**(-0.1266, 0, -0.077)。資料集二的設定檔填的是正值。我在 3 分鐘資料上兩種符號都跑過,結果差異可忽略(ATE 0.164m vs 0.155m,z 上飄同樣約 3.5m),所以 z 上飄不是符號造成的。
 - **LIO-SAM 官方版**:輸出的 `transformations.pcd` 是 ASCII 格式,`export_liosam_trajectory.py` 已補上支援;關鍵幀時間戳因為精度被截斷,不能用來做時間對齊。官方版一樣會噴 `TF_NO_FRAME_ID`(不影響 `mapOptimization` 的輸出)。
-- 重跑方式:`bash slam_comparison/docker/run_lab_all.sh <切好的 bag> <標籤>`;原始資料、轉檔、映像備份都在 `data/`,輸出在 `outputs/compal_amr_<標籤>_*`(兩者都不在 git 裡)。
+- 重跑方式:`bash slam_comparison/docker/run_lab_all.sh <切好的 bag> <標籤>`;原始資料、轉檔、映像備份都在 `data/`,輸出在 `outputs/compal_amr/<標籤>/<系統>/`(可用環境變數 `OUTNAME` 改資料夾名稱;兩者都不在 git 裡)。
+
+## 資料集三(續):同一份 bag 的 Livox Mid360 光達(全段 809 秒,四套系統、官方版本)
+
+同一段錄影、同一條路徑,這次改用 bag 裡的 Livox Mid360(`/livox/lidar`,`livox_ros_driver2/CustomMsg`,10Hz、每幀約 2 萬點、4 條線)和它自己的 IMU(`/livox/imu`,200Hz)。**沒有 ground truth**,閉環同樣是推論。
+
+**資料上的三個坑**(都不是演算法問題,但不處理就跑不起來):
+- **frame 對不上**:點雲的 `frame_id` 是 `livox_link`(`tf_static` 有 `base_link→livox_link`,俯仰 20°),但 `/livox/imu` 是 `livox_frame`,TF 裡沒有這個 frame。處理方式:IMU 維持 `livox_frame`,點雲轉檔時也改標成 `livox_frame`,並補一條 `livox_link→livox_frame` 的單位轉換 TF(視為同一顆感測器,Livox 內部 IMU 與光達原點的幾公分偏移交給各演算法的外參)。
+- **IMU 單位是 g**(靜止時 |a|≈1.0),而且**沒有姿態**(`orientation` 是單位四元數、共變異數 0,是 6 軸 IMU)。Cartographer 與 LIO-SAM 拿到的是換成 m/s² 的版本;官方 FAST_LIO 會自己依重力重新縮放,所以它拿原始單位。
+- **Cartographer 要求點雲的「最後一個點時間最大」**,而 Livox 的點沒有按時間排序,第一次跑因此在 `msg_conversion.cpp` 斷言崩潰;轉檔時把點依時間排序即可。
+
+**各系統用的 IMU 與輸入**:
+
+| 系統 | IMU | 輸入與設定 |
+|---|---|---|
+| Cartographer 3D | `/livox/imu`(另外一次用 `/imu/data`,即 Xsens) | 點雲轉成 Velodyne 格式的 PointCloud2(`ring`=Livox `line`、`time`=`offset_time`),加 `/odometry`;實驗室的 `spot_offline_mapping.lua`,只把 `tracking_frame` 改成 `livox_frame`(Xsens 版則完全不改) |
+| RTAB-Map | 不用 IMU | 同 Vanjee 那組(`/odometry` 當里程計骨幹、`Reg/Force3DoF`),掃描改成 Livox 點雲 |
+| FAST-LIO2(官方) | `/livox/imu` | 官方 `mid360.yaml` **完全未修改**,輸入是真正的 `CustomMsg`(ROS2 的 `CustomMsg` 只是重新編碼成 ROS1 的 `livox_ros_driver/CustomMsg`,點與 `offset_time` 原樣保留,去形變由 FAST_LIO 自己做) |
+| LIO-SAM(官方) | `/livox/imu` | 官方 ROS2 分支,`sensor: livox`、`N_SCAN: 4`、`Horizon_SCAN: 6000`(Livox 模式依到達順序給每條線的點編欄位,所以要大於每線點數約 5000)、`lidarFrame=baselinkFrame=livox_frame`、外參用 Livox 規格(IMU 在光達座標系 (11, 23.29, -44.12)mm) |
+
+**結果**(對照 `/odometry` 的 ATE 是 SE3 對齊後的 RMSE;`/odometry` 首尾相距 9.33m、會漂,所以這欄只是參考):
+
+| 系統 | 狀態 | 首尾距離 | 路徑長度 | 姿態數 | ATE vs `/odometry` | 備註 |
+|---|---|---|---|---|---|---|
+| Cartographer(Livox IMU) | ✅ | 2.19m | 436.01m | 5432 | 3.02m(最大 6.09m) | 4337 次約束計算中 837 個成為新約束;z 範圍 [-0.47, 0.18]m |
+| Cartographer(Xsens IMU) | ✅ | **0.085m** | 444.86m | 6289 | 2.97m(最大 6.13m) | 5854 次中 518 個約束;z 範圍 [-1.70, 1.12]m |
+| RTAB-Map | ✅(尾端有尖點) | 0.187m | 494.37m | 270 | 3.76m(最大 34.0m) | 資料庫 322 個節點、37 次迴環被拒;t≈799 秒附近少數節點跳離約 33m(跟 Vanjee 那組同一個現象) |
+| FAST-LIO2(官方) | ✅ | **0.023m** | 442.59m | 8088 | 3.31m(最大 5.26m) | 純里程計、沒有迴環,沒有發散 |
+| LIO-SAM(官方) | ✅ | 0.097m | 445.49m | 3553 | 3.52m(最大 6.00m) | 最後一次執行 0 次 IMU 重置(見下) |
+
+**能確定的事**:
+- 這次四套系統都能用 Livox 跑完全段。同一條路徑、同一份官方 FAST_LIO 與 LIO-SAM,用 Vanjee 的 4 線光達時兩者都發散,用 Livox 時都正常(FAST-LIO2 首尾只差 2.3cm)。我沒有把原因拆開驗證:可能是光達(密度與視野)、也可能是 IMU,兩個變因是一起換的。
+- 各系統彼此吻合:以 Cartographer(Xsens IMU)為參考,SE3 對齊後 Cartographer(Livox IMU)相差 1.36m、FAST-LIO2 1.77m、LIO-SAM 1.95m、RTAB-Map 2.36m(RTAB-Map 另有那個 35m 的尖點)。它們都比對照 `/odometry` 的 3.0~3.8m 近,因為那個數字主要來自 `/odometry` 自己的漂移。
+- Cartographer 換 Livox IMU 或 Xsens IMU 都能跑,但結果不同:Xsens 版首尾閉合到 8.5cm(Livox IMU 版是 2.19m),Livox IMU 版的 z 起伏較小。這只有單次執行,不能據此說哪顆 IMU 比較好。
+
+**要小心的事**:
+- **FAST-LIO2 與 LIO-SAM 的世界座標系是傾斜的**:6 軸 Livox IMU 沒有姿態,而 Livox 相對車體有 20° 俯仰(靜止時重力偏離感測器 z 軸 19.8°),所以它們的「z」不是垂直方向。FAST-LIO2 的 z 在折返點掉到 -62m(172m × sin20° ≈ 59m,符合),LIO-SAM 掉到 -34m;Cartographer 用 IMU 對齊重力,z 在 ±1.7m 內。表裡的 z 範圍與 ATE(SE3 對齊)不受影響,但畫地圖時這兩個系統要先扶正,我用的是「軌跡擬合平面」(假設機器人在近乎平坦的路面上行駛)。
+- **LIO-SAM 官方要求 9 軸 IMU**,這裡姿態是單位四元數(等於假設感測器是水平的),實際上有 20° 傾斜。最後一次全段執行仍然順利,但這是官方版本在超出文件要求的條件下運作,不代表這是建議的用法。
+- **LIO-SAM 有一次啟動就崩潰**:全段的兩次檢查過的執行裡,有一次 `imuPreintegration` 在播放一開始因 GTSAM 的 `IndeterminantLinearSystemException`(初始化時線性系統不定)abort,之後整段都在沒有 IMU 預積分的降級模式下跑(漂移到 74m,這次結果我丟棄了);沒改任何程式碼,重跑一次就正常。3 分鐘試跑沒有發生。
+- RTAB-Map 的點雲圖是自己用優化後位姿加原始掃描組的(`rtabmap-export` 又是 0 個點),容許 0.06 秒的時間差。
+
+![Livox 軌跡對照:各系統整段 SE3 對齊到 Cartographer(Xsens IMU)後的俯視圖與誤差隨時間變化](docs/images/compal_amr/trajectory_compare_compal_amr_livox_full.png)
+
+![Livox 全段點雲地圖與軌跡四宮格(俯視、離地高度、紅=低藍=高,固定色帶 -0.5m 到 3.5m)](docs/images/compal_amr/comparison_map_grid_compal_amr_livox_full.png)
+
+四宮格的比例尺都是 10m;FAST-LIO2 與 LIO-SAM 用軌跡擬合平面扶正,離地高度以感測器離地約 0.337m(`base_footprint→base_link` 0.1457m 加 `base_link→livox_link` 的 0.1913m)換算。單張圖在 `docs/images/compal_amr/livox_full_individual/`。
+
+兩顆光達放在一起看,每個系統的首尾距離(不是精度排名,只是「有沒有回到起點」):
+
+![Vanjee 與 Livox 兩顆光達、各系統的首尾距離](docs/images/compal_amr/end_to_end_compare_compal_amr.png)
+
+**其他**:3 分鐘試跑四套都能跑通(Cartographer ATE 0.21m、FAST-LIO2 0.39m;LIO-SAM 當時匯出的時間戳被截斷,沒算 ATE)。資料與結果在 `data/lab3_livox_full`(切好的原始段)、`data/livoxfull_ros2`、`data/livoxfull_fastlio.bag`(轉檔後),結果在 `outputs/compal_amr/dataset3_livox_full/`;重跑用 `bash slam_comparison/docker/run_lab_livox_all.sh data/lab3_livox_full livoxfull`(要指定資料夾名稱就加 `OUTNAME=dataset3_livox_full`),Xsens IMU 版用 `run_lab_livox_carto_xsens.sh`。
